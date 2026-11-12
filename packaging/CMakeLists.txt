@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.15)
+project(ClipnadoLauncher LANGUAGES C)
+add_executable(ClipnadoStudioLite WIN32 ../scripts/launcher.c)
+target_link_libraries(ClipnadoStudioLite PRIVATE user32)
+target_compile_definitions(ClipnadoStudioLite PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_property(TARGET ClipnadoStudioLite PROPERTY MSVC_RUNTIME_LIBRARY MultiThreaded)

@@ -1,4 +1,4 @@
-param([switch]$Cuda)
+param([switch]$Cuda, [switch]$SkipPackaging)
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path $PSScriptRoot -Parent
 Set-Location $Root
@@ -11,16 +11,18 @@ function Checked([scriptblock]$Action) {
 Checked { python -m venv .venv }
 Checked { .\.venv\Scripts\python.exe -m pip install -e '.[dev]' }
 if (-not (Test-Path 'build/whisper-src')) {
-    Checked { git clone https://github.com/ggml-org/whisper.cpp.git build/whisper-src }
+    Checked { git clone --depth 1 --branch v1.8.2 https://github.com/ggml-org/whisper.cpp.git build/whisper-src }
 }
 Checked { git -C build/whisper-src checkout 4979e04f5dcaccb36057e059bbaed8a2f5288315 }
 $Gpu = if ($Cuda) { 'ON' } else { 'OFF' }
 $Options = @('-DGGML_NATIVE=OFF','-DGGML_AVX=ON','-DGGML_AVX2=OFF','-DGGML_BMI2=OFF',
     '-DGGML_FMA=OFF','-DGGML_F16C=OFF','-DGGML_AVX512=OFF','-DGGML_AVX_VNNI=OFF',
     '-DGGML_OPENMP=OFF',"-DGGML_CUDA=$Gpu",'-DWHISPER_CURL=OFF','-DWHISPER_BUILD_TESTS=OFF',
-    '-DWHISPER_BUILD_EXAMPLES=ON','-DBUILD_SHARED_LIBS=OFF')
+    '-DWHISPER_BUILD_EXAMPLES=ON','-DBUILD_SHARED_LIBS=OFF',
+    '-DCMAKE_POLICY_VERSION_MINIMUM=3.10','-DCMAKE_POLICY_DEFAULT_CMP0091=NEW',
+    '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded')
 if ($Cuda) { $Options += '-DCMAKE_CUDA_ARCHITECTURES=75' }
-Checked { cmake -S build/whisper-src -B build/whisper-build -A x64 @Options }
+Checked { cmake -S build/whisper-src -B build/whisper-build -G 'Visual Studio 17 2022' -A x64 @Options }
 Checked { cmake --build build/whisper-build --config Release --target whisper-cli -j 4 }
 New-Item -ItemType Directory -Force tools,models | Out-Null
 Get-ChildItem build/whisper-build -Filter whisper-cli.exe -Recurse | Select-Object -First 1 | Copy-Item -Destination tools/whisper-cli.exe
@@ -34,7 +36,8 @@ if (-not (Test-Path models/ggml-base.bin)) {
     Move-Item models/ggml-base.bin.part models/ggml-base.bin
 }
 Write-Host 'Put ffmpeg.exe and ffprobe.exe (with libx264 and libass) in tools, or add FFmpeg to PATH.'
-Checked { .\.venv\Scripts\python.exe -m pytest -q }
+Checked { .\.venv\Scripts\python.exe -m pytest -q --junitxml=qa/test-results-windows.xml }
+if ($SkipPackaging) { return }
 Checked { .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name ClipnadoStudioLite --collect-submodules keyring.backends --collect-submodules win32ctypes --hidden-import PySide6.QtMultimediaWidgets run.py }
 Copy-Item tools dist/ClipnadoStudioLite/tools -Recurse -Force
 Copy-Item models dist/ClipnadoStudioLite/models -Recurse -Force

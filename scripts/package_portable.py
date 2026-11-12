@@ -60,7 +60,7 @@ def main():
         unpack(wheel, packages)
         wheel_manifest.append({"name": wheel.name, "sha256": sha(wheel)})
     # Namespace packages in multiple jaraco wheels naturally share the same folder.
-    for folder in ("clipnado", "scripts", "demo", "licenses"):
+    for folder in ("clipnado", "scripts", "demo", "licenses", "qa"):
         source = root / folder
         if source.exists():
             shutil.copytree(source, dest / folder, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))

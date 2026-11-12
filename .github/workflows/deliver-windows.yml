@@ -1,0 +1,69 @@
+name: Build test and deliver Windows package
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  deliver:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    env:
+      QT_QPA_PLATFORM: offscreen
+      CLIPNADO_DATA_DIR: '${{ runner.temp }}/clipnado-data'
+      CLIPNADO_TEST_WHISPER: '${{ github.workspace }}/tools/whisper-cli.exe'
+      CLIPNADO_TEST_MODEL: '${{ github.workspace }}/models/ggml-base.bin'
+      GH_TOKEN: '${{ github.token }}'
+      RELEASE_TAG: preview-0.1.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Download verified FFmpeg and embedded Python
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force assets,tools | Out-Null
+          Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-essentials_build.zip -OutFile assets/ffmpeg-windows.zip
+          if ((Get-FileHash assets/ffmpeg-windows.zip -Algorithm SHA256).Hash.ToLower() -ne 'db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec') { throw 'FFmpeg checksum mismatch' }
+          python -m zipfile -e assets/ffmpeg-windows.zip assets/ffmpeg
+          Get-ChildItem assets/ffmpeg -Filter ffmpeg.exe -Recurse | Select-Object -First 1 | Copy-Item -Destination tools/ffmpeg.exe
+          Get-ChildItem assets/ffmpeg -Filter ffprobe.exe -Recurse | Select-Object -First 1 | Copy-Item -Destination tools/ffprobe.exe
+          (Resolve-Path tools).Path | Out-File -FilePath $env:GITHUB_PATH -Append
+          Invoke-WebRequest https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip -OutFile assets/python-windows.zip
+      - name: Build CPU speech engine and run all regression tests
+        shell: pwsh
+        run: ./scripts/build_windows.ps1 -SkipPackaging
+      - name: Build native launcher and collect dependencies
+        shell: pwsh
+        run: |
+          cmake -S packaging -B build/launcher -G 'Visual Studio 17 2022' -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher configure failed' }
+          cmake --build build/launcher --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher build failed' }
+          Copy-Item build/launcher/Release/ClipnadoStudioLite.exe assets/ClipnadoStudioLite.exe
+          Copy-Item tools/whisper-cli.exe assets/whisper-cli.exe
+          Copy-Item models/ggml-base.bin assets/ggml-base.bin
+          python -m pip download --only-binary=:all: --require-hashes -r requirements-windows.lock --dest wheels
+          if ($LASTEXITCODE -ne 0) { throw 'Wheel download failed' }
+      - name: Assemble and test the actual portable runtime
+        shell: pwsh
+        run: |
+          python scripts/package_portable.py --assets assets --wheels wheels --output build/portable
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
+          python scripts/verify_portable.py build/portable
+          if ($LASTEXITCODE -ne 0) { throw 'Portable runtime smoke failed' }
+      - name: Package and upload release
+        shell: pwsh
+        run: |
+          python scripts/finalize_windows_release.py build/portable output
+          if ($LASTEXITCODE -ne 0) { throw 'Final package failed' }
+          gh release upload $env:RELEASE_TAG output/ClipnadoStudioLite-Windows-x64.zip output/ClipnadoStudioLite-source.zip output/START-HERE.md output/QA_REPORT.md output/SHA256SUMS.txt --clobber --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed' }
+          gh release edit $env:RELEASE_TAG --draft=false --prerelease --target $env:GITHUB_SHA --notes-file output/release-notes.md --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-test-report
+          path: qa/test-results-windows.xml
