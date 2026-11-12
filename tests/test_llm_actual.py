@@ -16,7 +16,7 @@ from clipnado.process import Cancellation
 
 @pytest.mark.skipif(not os.environ.get("CLIPNADO_TEST_LLAMA") or not os.environ.get("CLIPNADO_TEST_QWEN"),
                     reason="Set actual local llama-cli and Qwen GGUF paths")
-def test_actual_qwen_semantic_selection_and_cache(tmp_path):
+def test_actual_qwen_semantic_selection_and_cache(tmp_path, monkeypatch):
     fixture = Path(__file__).resolve().parent.parent / "qa" / "qwen-dialogue-fixture.json"
     data = json.loads(fixture.read_text(encoding="utf-8"))
     segments = [Segment(**s) for s in data["segments"]]
@@ -30,5 +30,8 @@ def test_actual_qwen_semantic_selection_and_cache(tmp_path):
     assert result.candidates, "Actual model failed to select the authored humorous dialogue"
     assert any(c.start_ms <= 20000 and c.end_ms >= 80000 for c in result.candidates)
     assert all(c.provider.startswith("local-qwen:") and c.score >= 60 for c in result.candidates)
-    again = provider.analyze(media, segments, SearchSettings(), cache, Cancellation(), lambda *_: pytest.fail("Repeated actual inference"))
+    def repeated_inference(*_args, **_kwargs):
+        pytest.fail("Repeated actual inference")
+    monkeypatch.setattr("clipnado.local_llm.run", repeated_inference)
+    again = provider.analyze(media, segments, SearchSettings(), cache, Cancellation(), lambda *_: None)
     assert [c.id for c in again.candidates] == [c.id for c in result.candidates]
