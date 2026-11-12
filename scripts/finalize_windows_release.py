@@ -1,4 +1,4 @@
-"""Record native Windows validation and produce downloadable release assets."""
+"""Require native inference tests before publishing the offline Windows package."""
 import hashlib
 import json
 import os
@@ -9,106 +9,98 @@ import sys
 import xml.etree.ElementTree as ET
 import zipfile
 
+MODEL_SHA = '35295e9a0a42eff5ebc592412c754991c0b6cc36bf4f282b2a491b211476752d'
+
 
 def digest(path):
     h = hashlib.sha256()
-    with path.open("rb") as stream:
+    with path.open('rb') as stream:
         while block := stream.read(8 * 1024 * 1024):
             h.update(block)
     return h.hexdigest()
 
 
 def main():
-    portable, output = (Path(p).resolve() for p in sys.argv[1:3])
+    portable, output, model = (Path(p).resolve() for p in sys.argv[1:4])
     root = Path(__file__).resolve().parent.parent
-    test_xml = root / "qa" / "test-results-windows.xml"
-    cases = ET.parse(test_xml).findall(".//testcase")
-    if len(cases) < 101 or any(c.find("failure") is not None or c.find("error") is not None or c.find("skipped") is not None for c in cases):
-        raise RuntimeError("Complete Windows regression suite did not pass")
+    test_xml = root / 'qa' / 'test-results-windows.xml'
+    cases = ET.parse(test_xml).findall('.//testcase')
+    names = {c.attrib['name'] for c in cases}
+    required = {'test_actual_qwen_semantic_selection_and_cache',
+                'test_windows_cancel_stops_descendant_process_and_releases_logs'}
+    if len(cases) < 84 or not required <= names or any(
+        c.find(tag) is not None for c in cases for tag in ('failure', 'error', 'skipped')
+    ):
+        raise RuntimeError('Complete Windows regression suite with actual local models did not pass')
+    if digest(model) != MODEL_SHA or model.stat().st_size >= 2**31:
+        raise RuntimeError('Separate Qwen release asset is invalid')
     run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-    report = f"""# Проверка Windows — Clipnado Studio Lite 0.1.3
+    report = f'''# Проверка Clipnado Studio Lite 0.1.4
 
-Проверка выполнена на GitHub Actions **Windows Server 2022 x64**: {run_url}
+Windows Server 2022 x64 / GitHub Actions: {run_url}
 
-- {len(cases)} теста прошли, включая GUI, экспорт H.264/AAC, субтитры, реальные вызовы FFmpeg, распознавание русской речи и кэш.
-- Новое 0.1.3: отдельный анализ видео со звуком Gemini Free; серверное распознавание и смысловой отбор Groq Free; оба пропускают локальное распознавание. Проверены подготовка видео/аудио настоящим FFmpeg, протоколы API на имитаторе, согласие, раздельные ключи, квоты, отмена, удаление видеокопии, возобновление кэша, проверка таймкодов, покрытие длинного видео и фоновый GUI.
-- Живые вызовы Gemini/Groq и качество отбора реальных видео НЕ проверены: сервисные ключи не предоставлены. Тесты с имитатором проверяют программу и протокол, а не качество модели, действительность пользовательской квоты или скорость облака. Выпуск содержит новые экспериментальные онлайн-режимы.
-- Сам переносимый пакет дополнительно проверен через вложенный Windows Embedded Python: импорты Qt, запуск FFmpeg/ffprobe/Whisper, GUI, ручной интервал и настоящий экспорт MP4.
-- whisper.cpp и EXE-запускатель собраны нативно MSVC. Whisper: AVX включён, AVX2/BMI2/FMA/F16C/AVX512/CUDA отключены.
-- ZIP проверен на целостность, контрольные суммы находятся в SHA256SUMS.txt.
+- {len(cases)} теста прошли без пропусков и ошибок. Проверены GUI, настоящий FFmpeg, экспорт H.264/AAC и субтитров, отмена дочерних процессов, кэш и сохранение проекта.
+- Реальный Whisper распознал человеческую русскую речь; реальная Qwen3-4B выбрала эпизод из составленного русского диалога. Второй запуск использовал кэш. Это проверка выполнения моделей и одного примера, а не точности на пользовательских стримах.
+- Переносимый пакет отдельно запущен через вложенный Python: Qt, видеокадры, воспроизведение, настоящий экспорт MP4, загрузка GGUF и генерация одного токена настоящей Qwen. Полный диалог проверен тестом выше; GUI-проводка анализа дополнительно проверена с подменённым ответом CLI при заблокированных Python-соединениях.
+- CPU и Vulkan-движки Whisper/llama.cpp собраны MSVC. AVX включён, AVX2/BMI2/FMA/F16C/AVX512 выключены. Vulkan использует установленный драйвер; CUDA и сервер/API не нужны.
+- GGUF поставляется отдельным файлом, его SHA-256 проверен. ZIP проверен на целостность; суммы всех файлов выпуска — в SHA256SUMS.txt.
 
-Не проверены физический Xeon E5-2670, Windows 10 пользователя, GTX 1660/CUDA и человеческое качество отбора нескольких размеченных стримов. Это предварительный выпуск. Автоматические тесты не гарантируют точность отбора.
-
-Сведения об исходной Linux-проверке сохранены ниже как исторический отчёт; её утверждения о ещё не выполненной Windows-проверке относятся к состоянию до этого запуска.
-
----
-
-""" + (root / "QA_REPORT.md").read_text(encoding="utf-8")
-    (portable / "QA_REPORT.md").write_text(report, encoding="utf-8")
-    original_readme = (root / "README.md").read_text(encoding="utf-8")
-    readme = f"""# Скачать и запустить Clipnado Studio Lite
-
-Этот пакет собран и проверен на Windows Server 2022 x64: {run_url}
-
-Полностью распакуйте ZIP и запустите **ClipnadoStudioLite.exe**. Python, FFmpeg и модель включены; для локального режима интернет не требуется. При проблеме запуска откройте diagnostics.cmd.
-
-Комплектные whisper-cli.exe и запускатель собраны MSVC; прежние сведения о кросс-сборке LLVM-MinGW ниже описывают предыдущую Linux-сборку. Текущие результаты находятся в QA_REPORT.md. Совместимость с конкретным ПК пользователя и качество отбора реальных стримов требуют отдельной проверки.
-
----
-
-""" + original_readme
-    (portable / "README.md").write_text(readme, encoding="utf-8")
-    shutil.copy2(test_xml, portable / "qa" / test_xml.name)
-    for cache in list(portable.rglob("__pycache__")):
+Физические Xeon E5-2670, GTX 1660/Vulkan и Windows 10 пользователя не проверены. Скорость на этом ПК и точность на реальных длинных видео не измерены. Qwen анализирует расшифровку, не изображение: чисто визуальные моменты может пропустить. Цель 10 клипов с порогом 60 не означает гарантии для любого видео. Это предварительный выпуск.
+'''
+    (portable / 'QA_REPORT.md').write_text(report, encoding='utf-8')
+    shutil.copy2(test_xml, portable / 'qa' / test_xml.name)
+    for cache in list(portable.rglob('__pycache__')):
         if cache.is_dir():
             shutil.rmtree(cache)
-    manifest_path = portable / "MANIFEST.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["windows_execution_verified"] = True
-    manifest["windows_validation"] = {"os": "Windows Server 2022 x64", "tests_passed": len(cases), "workflow_url": run_url,
-                                      "portable_gui_export": True, "compiler": "MSVC", "target_hardware_verified": False}
-    manifest["files"] = {str(p.relative_to(portable)).replace("\\", "/"): digest(p) for p in sorted(portable.rglob("*"))
-                         if p.is_file() and p != manifest_path}
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest_path = portable / 'MANIFEST.json'
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    manifest['windows_execution_verified'] = True
+    manifest['windows_validation'] = {
+        'os': 'Windows Server 2022 x64', 'tests_passed': len(cases), 'workflow_url': run_url,
+        'actual_whisper': True, 'actual_qwen_dialogue': True, 'portable_qwen_token': True,
+        'portable_gui_export': True, 'compiler': 'MSVC', 'target_hardware_verified': False,
+        'physical_vulkan_verified': False,
+    }
+    manifest['files'] = {
+        str(p.relative_to(portable)).replace('\\', '/'): digest(p)
+        for p in sorted(portable.rglob('*')) if p.is_file() and p != manifest_path
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     output.mkdir(parents=True, exist_ok=True)
-    archive = output / "ClipnadoStudioLite-Windows-x64.zip"
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as package:
-        for path in sorted(portable.rglob("*")):
+    archive = output / 'ClipnadoStudioLite-Windows-x64.zip'
+    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as package:
+        for path in sorted(portable.rglob('*')):
             if path.is_file():
-                package.write(path, Path("ClipnadoStudioLite") / path.relative_to(portable))
+                package.write(path, Path('ClipnadoStudioLite') / path.relative_to(portable))
     with zipfile.ZipFile(archive) as package:
         if package.testzip():
-            raise RuntimeError("Windows ZIP verification failed")
-    subprocess.run(["git", "archive", "--format=zip", "--prefix=ClipnadoStudioLite-source/", "-o",
-                    str(output / "ClipnadoStudioLite-source.zip"), "HEAD"], cwd=root, check=True)
-    shutil.copy2(portable / "README.md", output / "START-HERE.md")
-    shutil.copy2(portable / "QA_REPORT.md", output / "QA_REPORT.md")
-    checks = [f"{digest(p)}  {p.name}" for p in sorted(output.iterdir()) if p.is_file() and p.name != "SHA256SUMS.txt"]
-    (output / "SHA256SUMS.txt").write_text("\n".join(checks) + "\n", encoding="utf-8")
-    notes = f"""Предварительный выпуск Clipnado Studio Lite 0.1.3.
+            raise RuntimeError('Windows ZIP verification failed')
+    subprocess.run(['git', 'archive', '--format=zip', '--prefix=ClipnadoStudioLite-source/', '-o',
+                    str(output / 'ClipnadoStudioLite-source.zip'), 'HEAD'], cwd=root, check=True)
+    shutil.copy2(portable / 'README.md', output / 'START-HERE.md')
+    shutil.copy2(portable / 'QA_REPORT.md', output / 'QA_REPORT.md')
+    checks = [f'{digest(p)}  {p.name}' for p in sorted(output.iterdir())
+              if p.is_file() and p.name not in ('SHA256SUMS.txt', 'release-notes.md')]
+    checks.append(f'{MODEL_SHA}  {model.name}')
+    (output / 'SHA256SUMS.txt').write_text('\n'.join(checks) + '\n', encoding='utf-8')
+    notes = f'''Clipnado Studio Lite 0.1.4 — полностью локальные Whisper + Qwen3-4B.
 
-Добавлены два экспериментальных режима Free API:
+API, ввод ключей и облачные клиенты удалены. Вместо прежнего отбора по ключевым словам теперь работает локальная смысловая модель Qwen: анализирует перекрывающиеся участки расшифровки, оценивает события и завершённость. Цель — 10 неповторяющихся клипов с оценкой от 60, без искусственного повышения баллов. Код приложения написан самостоятельно, код Supoclip не включён.
 
-- **Gemini Free · видео и звук**: уменьшенная копия всей записи, последовательные участки с перекрытием, визуальные и звуковые события. Локальный Whisper перед поиском не запускается.
-- **Groq Free · звук и текст**: серверное распознавание Whisper Large v3 и смысловой отбор GPT-OSS 120B. Передаётся звук; изображение не анализируется.
+**Для установки скачайте два файла из Assets:**
+1. Полностью распакуйте **ClipnadoStudioLite-Windows-x64.zip**.
+2. Скачайте **{model.name}** (2,08 ГБ) и положите в папку **models** внутри распакованной программы. Либо выберите файл кнопкой «Указать модель Qwen (.gguf)».
+3. Запустите **ClipnadoStudioLite.exe**, выберите видео и нажмите «Найти эпизоды».
 
-Один раз выберите сервис, создайте собственный API-ключ в AI Studio или Groq Console на аккаунте **без биллинга/платёжного метода**, введите его в программе и подтвердите передачу данных. Дальше подготовка, загрузка, обработка и сбор кандидатов выполняются в фоне. Ключи двух сервисов хранятся отдельно в Credential Manager. Готовые участки сохраняются при квоте; полный результат из кэша не отправляется повторно. Автоматического платного переключения нет. Цель 10 клипов с порогом 60 сохраняется, но не гарантируется для любого видео.
+Python, FFmpeg, Whisper base и CPU/Vulkan-движки включены. После скачивания интернет не нужен. По умолчанию программа проверяет видеокарту через Vulkan и при необходимости переключается на CPU. Под Xeon E5-2670 исключены AVX2/FMA/F16C/BMI2. CUDA Toolkit устанавливать не нужно. При первом запуске возможна подготовка модели на диске; CPU-анализ может быть долгим.
 
-**Живые запросы Gemini/Groq и точность/скорость на реальных видео ещё не проверены:** ключей сервисов в среде нет. Протоколы проверены на имитаторе; подготовка медиа, GUI и экспорт — настоящими инструментами. Это не обещание исправленной точности на пользовательской записи. Код Supoclip не включён; новые адаптеры написаны самостоятельно.
+**Windows Server 2022: {len(cases)} теста без пропусков**, включая реальный Whisper и реальную Qwen на составленном диалоге. Готовый пакет дополнительно проверен: настоящее выполнение Qwen, GUI, видео и экспорт. [Результаты]({run_url}).
 
-Для нового поиска выберите **Gemini Free · видео и звук**, введите ключ Google и нажмите «Найти эпизоды». Для Groq выберите **Groq Free · звук и текст** и введите отдельный ключ Groq. Локальный режим сохранён, его возможности ограничены эвристикой и скоростью CPU. Отчёт о времени этапов и полноте проверки доступен кнопкой «Отчёт о последнем анализе».
-
-Скачайте **ClipnadoStudioLite-Windows-x64.zip** из Assets, полностью распакуйте и запустите **ClipnadoStudioLite.exe**. Python, FFmpeg и модель Whisper base включены.
-
-**Проверено на Windows Server 2022 x64: {len(cases)} теста прошли.** Сам переносимый пакет проверен отдельно: вложенный Python/Qt, GUI и реальный экспорт MP4. [Результаты Windows-проверки]({run_url}).
-
-Не проверены физический Xeon E5-2670, Windows 10 пользователя, GTX 1660/CUDA и качество отбора нескольких реальных размеченных стримов. Точность ИИ не гарантируется. Комплектный Whisper собран для AVX без AVX2/BMI2/FMA/F16C/AVX512, через CPU.
-
-В Assets также находятся исходники, инструкция, подробный отчёт и SHA256SUMS.txt.
-"""
-    (output / "release-notes.md").write_text(notes, encoding="utf-8")
-    print(f"Windows release verified: {len(cases)} tests; ZIP {archive.stat().st_size} bytes", flush=True)
+Физические GTX 1660 / Xeon и скорость на пользовательском видео не проверены. Модель анализирует текст речи, а не изображение; точность и минимум 10 интересных клипов для любого видео не гарантируются. Подробности в QA_REPORT.md; контрольные суммы — SHA256SUMS.txt.
+'''
+    (output / 'release-notes.md').write_text(notes, encoding='utf-8')
+    print(f'Windows release verified: {len(cases)} tests; ZIP {archive.stat().st_size} bytes', flush=True)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

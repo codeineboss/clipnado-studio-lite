@@ -1,4 +1,4 @@
-"""Offline diagnostics: no API key, project or transcript is printed."""
+"""Offline diagnostics: only local engines and models are inspected."""
 import platform
 import sys
 from pathlib import Path
@@ -13,13 +13,14 @@ def main():
     print("Clipnado offline diagnostics")
     print(platform.platform(), sys.version)
     tools = default_tools()
-    for name, flag in [("ffmpeg", "-version"), ("ffprobe", "-version"), ("whisper", "--help")]:
+    for name, flag in [("ffmpeg", "-version"), ("ffprobe", "-version"), ("whisper", "--help"), ("llama", "--version")]:
         try:
             result = run([getattr(tools, name), flag], timeout=20)
             print(name, "OK", next((line for line in result.splitlines() if line), ""))
         except Exception as exc:
             print(name, "ERROR", str(exc)[-600:])
     print("Speech model:", "OK" if Path(tools.model).is_file() else "MISSING")
+    print("Qwen model:", "OK" if tools.semantic_model and Path(tools.semantic_model).is_file() else "Separate GGUF asset must be installed in models")
     try:
         from PySide6.QtCore import qVersion
         from PySide6.QtWidgets import QApplication

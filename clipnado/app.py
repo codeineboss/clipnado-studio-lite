@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__
-from .analysis import LocalFallbackProvider, recognize
+from .analysis import recognize
 from .export import export_clip
 from .media import Tools, probe, thumbnail
 from .models import Candidate, ExportSettings, Project, SearchSettings, Segment, parse_time, timecode
@@ -31,12 +31,10 @@ from .process import Cancellation, Cancelled, run
 from .preview import VideoPreview
 from .projects import load_project, save_project
 from .selection import shortfall_message
-from .providers import GeminiFreeProvider, MODELS
-from .settings import data_root, load_key, read_settings, restore_tools, save_key, write_settings
+from .settings import data_root, read_settings, restore_tools, write_settings
 from .subtitles import from_srt
 from .workers import Worker
-from .video_analysis import GeminiVideoProvider
-from .groq_analysis import GroqFreeProvider
+from .local_llm import LocalModelProvider, prepare_backend
 
 STYLE = """
 QWidget { background: #111820; color: #e7edf3; font-family: 'Segoe UI', 'DejaVu Sans'; font-size: 13px; }
@@ -109,6 +107,8 @@ class SettingsDialog(QDialog):
             ("ffprobe", "ffprobe", parent.tools.ffprobe, False),
             ("whisper", "whisper.cpp CLI", parent.tools.whisper, False),
             ("model", "Модель Whisper (.bin)", parent.tools.model, False),
+            ("llama", "llama.cpp CLI", parent.tools.llama, False),
+            ("semantic_model", "Модель Qwen (.gguf)", parent.tools.semantic_model, False),
             ("cache", "Кэш", str(parent.cache), True),
             ("output", "Результаты", str(parent.output), True),
         ]:
@@ -125,12 +125,12 @@ class SettingsDialog(QDialog):
             form.addRow(label, row)
             self.fields[name] = line
         self.threads = spin(1, 32, parent.tools.threads)
-        self.gpu = QCheckBox("CUDA — только для совместимой CUDA-сборки whisper.cpp")
-        self.gpu.setChecked(parent.tools.gpu)
+        self.acceleration = combo(["Авто: Vulkan → CPU", "Только CPU"])
+        self.acceleration.setCurrentIndex(1 if parent.tools.acceleration == "cpu" else 0)
         form.addRow("Потоки CPU", self.threads)
-        form.addRow(self.gpu)
+        form.addRow("Ускорение", self.acceleration)
         layout.addLayout(form)
-        layout.addWidget(note("CPU включён по умолчанию. Для Xeon без AVX2 используйте комплектный Whisper или scripts/build_windows.ps1; обычные готовые сборки могут требовать AVX2. GTX 1660 требует отдельной CUDA-сборки. Настройки распознавания применяются к новым проектам; сохранённый текст можно очистить вручную."))
+        layout.addWidget(note("Все модели работают локально. Для Xeon E5-2670 используйте комплектные сборки без AVX2/FMA/F16C. Режим «Авто» проверяет Vulkan и использует CPU при недоступном ускорении. Qwen оценивает смысл расшифровки, изображение она не анализирует."))
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -158,18 +158,11 @@ class MainWindow(QMainWindow):
         self.poster_serial = 0
         self.repopulating = False
         self.visible_count = 15
-        self.api_key = load_key()
-        self.api_keys = {"gemini": self.api_key, "groq": load_key("groq")}
-        self.api_service = "gemini"
-        self.online_consent = None
         self.build_ui()
         self.task_clock = QTimer(self)
         self.task_clock.setInterval(1000)
         self.task_clock.timeout.connect(self.update_task_elapsed)
-        self.model.setCurrentText(settings.get("model", MODELS[0]) if "analysis_mode" in settings else MODELS[0])
-        mode = settings.get("analysis_mode", 2)
-        self.provider.setCurrentIndex(mode if type(mode) is int and mode in (0, 1, 2, 3) else 2)
-        self.update_analysis_hint()
+        self.update_local_hint()
         self.connect_player()
         recovery = data_root() / "recovery.clipnado.json"
         if recovery.exists():
@@ -227,35 +220,16 @@ class MainWindow(QMainWindow):
         durations_row.addWidget(QLabel("—"))
         durations_row.addWidget(self.maximum)
         form.addRow("Длина, секунд", durations)
-        form.addRow("Чувствительность", self.sensitivity)
         self.categories = []
         for label in ("История", "Юмор", "Реакция", "Неожиданность"):
             check = QCheckBox(label)
             check.setChecked(True)
             self.categories.append(check)
             form.addRow(check)
-        self.provider = combo(["Локально · текст и звук", "Gemini Free · текст", "Gemini Free · видео и звук", "Groq Free · звук и текст"])
-        self.provider.setMinimumContentsLength(12)
-        self.provider.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        form.addRow("Анализ", self.provider)
-        self.model = combo(list(MODELS))
-        form.addRow("Модель Gemini", self.model)
-        self.model_label = form.labelForField(self.model)
-        self.key = QLineEdit(self.api_key)
-        self.key.setEchoMode(QLineEdit.Password)
-        self.key.setPlaceholderText("Ключ только в Credential Manager")
-        form.addRow("API-ключ", self.key)
-        api_row = QWidget()
-        api_layout = QHBoxLayout(api_row)
-        api_layout.setContentsMargins(0, 0, 0, 0)
-        api_layout.addWidget(button("Проверить", self.check_api))
-        api_layout.addWidget(button("Очистить", self.clear_api))
-        form.addRow(api_row)
-        self.api_status = note("API выключен. Локальная работа не требует ключа.")
-        form.addRow(self.api_status)
-        self.analysis_hint = note("")
-        form.addRow(self.analysis_hint)
-        self.provider.currentIndexChanged.connect(self.update_analysis_hint)
+        form.addRow("Анализ", QLabel("Qwen · локальная модель"))
+        self.local_hint = note("")
+        form.addRow(self.local_hint)
+        form.addRow(button("Указать модель Qwen (.gguf)", self.choose_semantic_model))
         self.analyze_button = button("Найти эпизоды", self.analyze, True)
         form.addRow(self.analyze_button)
         sidebar_layout.addWidget(search)
@@ -513,10 +487,6 @@ class MainWindow(QMainWindow):
 
     def task_error(self, message):
         self.task_clock.stop()
-        # Never display an entered secret even if an unexpected backend embeds it in an error.
-        for value in {*self.api_keys.values(), self.key.text()}:
-            if value:
-                message = message.replace(value, "[ключ скрыт]")
         self.status.setText("Операция не завершена")
         self.show_error(message)
 
@@ -540,7 +510,7 @@ class MainWindow(QMainWindow):
         if self.token:
             self.token.cancel()
             self.task_clock.stop()
-            self.status.setText("Отмена… Внешний процесс останавливается; сетевой запрос завершится по таймауту до 180 секунд.")
+            self.status.setText("Отмена… Локальные движки завершаются, проверенные участки остаются в кэше.")
 
     def show_error(self, message):
         QMessageBox.warning(self, "Clipnado", str(message))
@@ -627,62 +597,36 @@ class MainWindow(QMainWindow):
             return
         try:
             settings = self.search_settings()
-            video_mode = self.provider.currentIndex() == 2
-            groq_mode = self.provider.currentIndex() == 3
-            provider = LocalFallbackProvider()
-            if self.provider.currentIndex() in (1, 2, 3):
-                if not self.key.text().strip():
-                    address = "console.groq.com/keys" if groq_mode else "aistudio.google.com/api-keys"
-                    raise ValueError(f"Один раз создайте ключ на {address} и введите его в поле API-ключ. Нужен бесплатный аккаунт без платёжного метода. Ключ не отправляйте в чат.")
-                identity = (self.key.text(), self.model.currentText(), self.provider.currentIndex())
-                if self.online_consent != identity:
-                    content = ("В этом сеансе звук выбранных видео будет автоматически отправляться в Groq для серверного распознавания и смыслового отбора. Изображение в Groq не передаётся. " if groq_mode else
-                               "В этом сеансе выбранные видео будут автоматически отправляться в Google как уменьшенная копия со звуком. "
-                               "Проверяется вся длительность по участкам; локальное распознавание перед поиском не требуется. " if video_mode else
-                               "В этом сеансе в Google будет отправляться только расшифровка с таймкодами. ")
-                    handling = ("Условия хранения и обработки аудио определяет Groq; проверьте Data Controls в консоли.\n\n" if groq_mode else
-                                "На бесплатном уровне Google может использовать материалы для улучшения продуктов, включая проверку людьми.\n\n")
-                    consent = QMessageBox.question(self, "Free API · передача данных и квота", content + handling +
-                        "API не подтверждает тариф ключа. Используйте только проект БЕЗ платёжного аккаунта. Программа не подключает биллинг, "
-                        "не переключается на платную модель и сохраняет готовые участки при исчерпании квоты.\n\n"
-                        "Вы проверили отсутствие биллинга и разрешаете передачу указанных данных в этом сеансе?",
-                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                    if consent != QMessageBox.Yes:
-                        return
-                    self.online_consent = identity
-                provider = (GroqFreeProvider(self.key.text(), True, True) if groq_mode else
-                            GeminiVideoProvider(self.key.text(), True, True, self.model.currentText(), video_consent=True)
-                            if video_mode else GeminiFreeProvider(self.key.text(), True, True, self.model.currentText()))
-                self.persist_key()
             self.persist_settings()
             project = copy.deepcopy(self.project)
-            tools, cache = copy.copy(self.tools), self.cache
+            cpu_tools, cache = copy.copy(self.tools), self.cache
             def execute(token, progress):
                 started = time.monotonic()
-                if video_mode or groq_mode:
-                    result = provider.analyze_video(project.media, settings, tools, cache, token, progress)
-                    candidates, warnings = result.candidates, result.warnings
-                    segments = result.segments if result.segments is not None else project.segments
-                    energy = project.audio_energy
-                    project.analysis_info = result.info
-                else:
+                tools, backend_warnings = prepare_backend(cpu_tools, token, progress)
+                try:
                     segments, energy, warnings = recognize(project.media, tools, cache, token, progress, project.segments,
                                                            existing_energy=project.audio_energy)
-                    speech_seconds = time.monotonic() - started
-                    progress(82, "Поиск цельных эпизодов…")
-                    stage = time.monotonic()
-                    candidates = provider.analyze(project.media, segments, settings, energy, token)
-                    project.analysis_info = {"mode": "local" if isinstance(provider, LocalFallbackProvider) else "text",
-                        "speech_seconds": round(speech_seconds, 2), "selection_seconds": round(time.monotonic() - stage, 2),
-                        "total_seconds": round(time.monotonic() - started, 2), "complete": True}
-                shortfall = ("Цель по количеству ещё не проверена: анализ исходника выполнен не полностью."
-                             if project.analysis_info.get("complete") is False else
-                             shortfall_message(project.media, settings, candidates, bool(segments), audiovisual=video_mode))
+                except RuntimeError:
+                    if not tools.gpu:
+                        raise
+                    tools.whisper, tools.gpu = cpu_tools.whisper, False
+                    progress(0, "Whisper: Vulkan не запустился, продолжаем на CPU…")
+                    segments, energy, warnings = recognize(project.media, tools, cache, token, progress, project.segments,
+                                                           existing_energy=project.audio_energy)
+                    backend_warnings.append("Whisper не запустился на Vulkan; распознавание выполнено на CPU.")
+                speech_seconds = time.monotonic() - started
+                stage = time.monotonic()
+                result = LocalModelProvider(tools, cpu_tools).analyze(project.media, segments, settings, cache, token, progress)
+                candidates = result.candidates
+                warnings = [*warnings, *backend_warnings, *result.warnings]
+                project.analysis_info = {**result.info, "speech_seconds": round(speech_seconds, 2),
+                    "selection_seconds": round(time.monotonic() - stage, 2), "total_seconds": round(time.monotonic() - started, 2),
+                    "speech_backend": "Vulkan" if tools.gpu else "CPU", "network_used": False}
+                shortfall = shortfall_message(project.media, settings, candidates, bool(segments))
                 if shortfall:
-                    warnings = [*warnings, shortfall]
+                    warnings.append(shortfall)
                 project.segments, project.candidates, project.search = segments, candidates, settings
-                project.audio_energy = energy
-                project.warnings = warnings
+                project.audio_energy, project.warnings = energy, warnings
                 project.validate()
                 return project
             self.analyze_button.setText("Поиск выполняется…")
@@ -702,27 +646,18 @@ class MainWindow(QMainWindow):
         if project.warnings:
             QMessageBox.information(self, "Качество поиска", "\n\n".join(project.warnings))
 
-    def update_analysis_hint(self, *_):
-        if not hasattr(self, "analysis_hint"):
-            return
-        mode = self.provider.currentIndex()
-        service = "groq" if mode == 3 else "gemini"
-        if service != self.api_service:
-            self.api_keys[self.api_service] = self.key.text()
-            self.api_service = service
-            self.key.setText(self.api_keys[service])
-            self.online_consent = None
-        self.model.setVisible(mode in (1, 2))
-        self.model_label.setVisible(mode in (1, 2))
-        self.key.setPlaceholderText("Groq · ключ в Credential Manager" if mode == 3 else "Google · ключ в Credential Manager")
-        self.analysis_hint.setText([
-            "Локальная эвристика по расшифровке. На старом CPU распознавание может идти долго. Визуальные шутки не оцениваются.",
-            "Сначала локальная расшифровка, затем смысловой отбор в Gemini. Передаётся текст.",
-            "Видеоанализ: Gemini видит изображение и слышит звук. Whisper перед поиском пропускается. Нужны интернет, бесплатная квота и ключ AI Studio.",
-            "Серверное распознавание Groq и смысловой отбор GPT-OSS. Локальный Whisper пропускается; визуальные события не оцениваются."
-        ][mode])
-        self.api_status.setText("Локальная работа не требует ключа." if mode == 0 else
-                               "Только аккаунт Groq Free без платёжного метода." if mode == 3 else "Только проект Google без биллинга. Квота зависит от аккаунта.")
+    def update_local_hint(self):
+        path = self.tools.semantic_model
+        self.local_hint.setText(("Модель: " + Path(path).name if path and Path(path).is_file() else
+            "Qwen не установлена. Скачайте GGUF-файл из локального выпуска и укажите его здесь.") +
+            "\nРаспознавание и смысловой отбор выполняются на вашем ПК. Интернет и ключи не требуются.")
+
+    def choose_semantic_model(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Локальная модель Qwen", self.tools.semantic_model, "Модель GGUF (*.gguf)")
+        if path:
+            self.tools.semantic_model = path
+            self.persist_settings()
+            self.update_local_hint()
 
     def show_analysis_report(self):
         if not self.project or not self.project.analysis_info:
@@ -731,7 +666,7 @@ class MainWindow(QMainWindow):
         import json
         info = self.project.analysis_info
         text = (f"Режим: {info.get('mode', '?')}\nВсего: {info.get('total_seconds', '?')} с\n"
-                f"Расшифровка CPU пропущена: {'да' if info.get('local_asr_skipped') else 'нет'}\n\n" +
+                f"Распознавание: {info.get('speech_backend', '?')}; Qwen: {info.get('llm_backend', '?')}\n\n" +
                 json.dumps(info, ensure_ascii=False, indent=2))
         QMessageBox.information(self, "Отчёт анализа · время и покрытие", text)
 
@@ -949,45 +884,10 @@ class MainWindow(QMainWindow):
         self.progress.setValue(100)
 
     def persist_settings(self):
-        write_settings(self.tools, str(self.cache), str(self.output), self.model.currentText(), self.provider.currentIndex())
+        write_settings(self.tools, str(self.cache), str(self.output))
 
-    def persist_key(self):
-        self.api_key = self.key.text()
-        try:
-            self.api_keys[self.api_service] = self.api_key
-            if self.api_service == "gemini":
-                save_key(self.api_key)
-            else:
-                save_key(self.api_key, "groq")
-        except Exception:
-            self.api_status.setText("Хранилище ключей недоступно; ключ только в памяти сеанса.")
 
-    def clear_api(self):
-        self.online_consent = None
-        self.api_keys[self.api_service] = ""
-        try:
-            if self.api_service == "gemini":
-                save_key("")
-            else:
-                save_key("", "groq")
-            self.key.clear()
-            self.api_key = ""
-            self.api_status.setText("Ключ удалён из памяти и безопасного хранилища.")
-        except Exception:
-            self.key.clear()
-            self.api_key = ""
-            self.api_status.setText("Ключ очищен из памяти; хранилище недоступно. Проверьте Credential Manager.")
 
-    def check_api(self):
-        if self.task_thread is not None:
-            return
-        try:
-            provider = (GroqFreeProvider(self.key.text()) if self.provider.currentIndex() == 3 else
-                        GeminiFreeProvider(self.key.text(), model=self.model.currentText()))
-            self.persist_key()
-            self.start_task(lambda token, progress: provider.check_connection(token), lambda message: self.api_status.setText(message))
-        except RuntimeError as exc:
-            self.show_error(exc)
 
     def settings(self):
         if self.task_thread is not None:
@@ -995,13 +895,17 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self)
         if dialog.exec() == QDialog.Accepted:
             values = {name: line.text().strip() for name, line in dialog.fields.items()}
-            self.tools = Tools(**{name: values[name] for name in ("ffmpeg", "ffprobe", "whisper", "model")},
-                               gpu=dialog.gpu.isChecked(), threads=dialog.threads.value())
+            for name in ("ffmpeg", "ffprobe", "whisper", "model", "llama", "semantic_model"):
+                setattr(self.tools, name, values[name])
+            self.tools.threads = dialog.threads.value()
+            self.tools.acceleration = "cpu" if dialog.acceleration.currentIndex() else "auto"
+            self.tools.gpu = False
             self.cache = Path(values["cache"] or str(data_root() / "cache"))
             self.output = Path(values["output"] or self.export_folder.text())
             self.export_folder.setText(str(self.output))
             try:
                 self.persist_settings()
+                self.update_local_hint()
             except OSError as exc:
                 self.show_error(exc)
 
@@ -1017,6 +921,13 @@ class MainWindow(QMainWindow):
                 result.append("Whisper запускается, модель найдена. Проверка реального распознавания выполняется при анализе.")
             else:
                 result.append("Модель Whisper не настроена. Импорт SRT и экспорт доступны.")
+            try:
+                from .local_llm import validate_tools
+                validate_tools(tools)
+                run([tools.llama, "--version"], token, timeout=20)
+                result.append("llama.cpp запускается, GGUF-модель Qwen найдена.")
+            except (ValueError, RuntimeError) as exc:
+                result.append(str(exc))
             return "\n\n".join(result)
         self.start_task(execute, lambda text: QMessageBox.information(self, "Инструменты", text))
 
@@ -1073,7 +984,7 @@ class MainWindow(QMainWindow):
                 self.visible_count = value.search.count
                 self.dirty = self.project_path is None
                 self.load_ui()
-                self.status.setText("Проект открыт. Распознавание и API не запускались.")
+                self.status.setText("Проект открыт. Повторный анализ не запускался.")
             self.start_task(execute, ready)
         except (ValueError, OSError) as exc:
             self.show_error(exc)

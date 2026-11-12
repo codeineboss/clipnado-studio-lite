@@ -50,16 +50,14 @@ def main():
     pth.write_text(f"{stdlib}\n.\n..\nLib/site-packages\nimport site\n", encoding="ascii")
     packages = runtime / "Lib" / "site-packages"
     packages.mkdir(parents=True)
-    skipped = ("secretstorage-", "jeepney-", "cryptography-", "cffi-", "pycparser-")
     wheel_manifest = []
     for wheel in sorted(args.wheels.glob("*.whl")):
-        if wheel.name.lower().startswith(skipped):
-            continue
+        if not wheel.name.lower().startswith(("pyside6-", "pyside6_addons-", "pyside6_essentials-", "shiboken6-")):
+            raise ValueError("Unexpected dependency in local-only package: " + wheel.name)
         if not (wheel.name.endswith("win_amd64.whl") or wheel.name.endswith("none-any.whl")):
             raise ValueError("Non-Windows wheel: " + wheel.name)
         unpack(wheel, packages)
         wheel_manifest.append({"name": wheel.name, "sha256": sha(wheel)})
-    # Namespace packages in multiple jaraco wheels naturally share the same folder.
     for folder in ("clipnado", "scripts", "demo", "licenses", "qa"):
         source = root / folder
         if source.exists():
@@ -76,14 +74,20 @@ def main():
         (tools / "FFmpeg-LICENSE.txt").write_bytes(package.read(next(n for n in package.namelist() if n.endswith("/LICENSE"))))
         (tools / "FFmpeg-README.txt").write_bytes(package.read(next(n for n in package.namelist() if n.endswith("/README.txt"))))
     shutil.copy2(args.assets / "whisper-cli.exe", tools / "whisper-cli.exe")
+    shutil.copy2(args.assets / "llama-cli.exe", tools / "llama-cli.exe")
+    shutil.copytree(args.assets / "vulkan", tools / "vulkan")
     shutil.copy2(args.assets / "ClipnadoStudioLite.exe", dest / "ClipnadoStudioLite.exe")
     (dest / "models").mkdir()
     model = args.assets / "ggml-base.bin"
     if sha(model) != "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe":
         raise ValueError("Model checksum mismatch")
     shutil.copy2(model, dest / "models" / "ggml-base.bin")
+    (dest / "models" / "QWEN-MODEL.txt").write_text("Поместите сюда Qwen_Qwen3-4B-Instruct-2507-Q3_K_M.gguf из этого же выпуска.\nSHA256: 35295e9a0a42eff5ebc592412c754991c0b6cc36bf4f282b2a491b211476752d\n", encoding="utf-8")
     manifest = {"format": 1, "python": "3.13.9", "whisper_commit": "4979e04f5dcaccb36057e059bbaed8a2f5288315",
-                "ffmpeg": "8.1.2-essentials_build", "cpu": "AVX; AVX2/BMI2/FMA/F16C/AVX512 disabled for whisper.cpp",
+                "ffmpeg": "8.1.2-essentials_build", "cpu": "AVX; AVX2/BMI2/FMA/F16C/AVX512 disabled for whisper.cpp and llama.cpp",
+                "llama_commit": "10e9780154365b191fb43ca4830659ef12def80f", "runtime_network": False,
+                "qwen_model": {"file": "Qwen_Qwen3-4B-Instruct-2507-Q3_K_M.gguf", "separate_asset": True,
+                               "sha256": "35295e9a0a42eff5ebc592412c754991c0b6cc36bf4f282b2a491b211476752d"},
                 "windows_execution_verified": False, "wheels": wheel_manifest,
                 "files": {str(p.relative_to(dest)).replace("\\", "/"): sha(p) for p in sorted(dest.rglob("*")) if p.is_file()}}
     (dest / "MANIFEST.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

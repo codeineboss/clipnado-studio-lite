@@ -1,4 +1,4 @@
-param([switch]$Cuda, [switch]$SkipPackaging)
+param([switch]$Cuda, [switch]$SkipPackaging, [switch]$SkipTests)
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path $PSScriptRoot -Parent
 Set-Location $Root
@@ -36,9 +36,9 @@ if (-not (Test-Path models/ggml-base.bin)) {
     Move-Item models/ggml-base.bin.part models/ggml-base.bin
 }
 Write-Host 'Put ffmpeg.exe and ffprobe.exe (with libx264 and libass) in tools, or add FFmpeg to PATH.'
-Checked { .\.venv\Scripts\python.exe -m pytest -q --junitxml=qa/test-results-windows.xml }
+if (-not $SkipTests) { Checked { .\.venv\Scripts\python.exe -m pytest -q --junitxml=qa/test-results-windows.xml } }
 if ($SkipPackaging) { return }
-Checked { .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name ClipnadoStudioLite --collect-submodules keyring.backends --collect-submodules win32ctypes --hidden-import PySide6.QtMultimediaWidgets run.py }
+Checked { .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name ClipnadoStudioLite --hidden-import PySide6.QtMultimediaWidgets run.py }
 Copy-Item tools dist/ClipnadoStudioLite/tools -Recurse -Force
 Copy-Item models dist/ClipnadoStudioLite/models -Recurse -Force
 Copy-Item README.md,LICENSE,THIRD_PARTY.md dist/ClipnadoStudioLite/

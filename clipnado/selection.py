@@ -63,11 +63,16 @@ def choose_candidates(candidates: list[Candidate], settings: SearchSettings, tok
     # Human-visible textual repeats cannot fill the target. Keep the strongest
     # occurrence, then try additional distinct episodes from the entire pool.
     selected, texts = [], []
+    exact_texts = set()
     def append(c):
         if any(c.start_ms < other.end_ms and c.end_ms > other.start_ms for other in selected):
             return
         words = content_words(c.transcript_excerpt)
-        if any(
+        exact = " ".join(c.transcript_excerpt.lower().split())
+        if c.provider.startswith("local-qwen:"):
+            if len(exact) > 50 and exact in exact_texts:
+                return
+        elif any(
             (len(words) >= 6 and words == other)
             or (len(words) >= 12 and len(other) >= 12
                 and (len(words & other) / max(1, len(words | other)) >= .8
@@ -77,6 +82,7 @@ def choose_candidates(candidates: list[Candidate], settings: SearchSettings, tok
             return
         selected.append(c)
         texts.append(words)
+        exact_texts.add(exact)
     for c in sorted(chosen, key=lambda c: (-c.score, c.start_ms)):
         token.check()
         append(c)

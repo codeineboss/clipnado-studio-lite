@@ -20,6 +20,12 @@ class Tools:
     model: str = ""
     gpu: bool = False
     threads: int = 8
+    llama: str = "llama-cli"
+    semantic_model: str = ""
+    llama_vulkan: str = ""
+    whisper_vulkan: str = ""
+    acceleration: str = "auto"
+    llm_gpu_layers: int = 99
 
 
 def fingerprint(path: Path, token: Cancellation | None = None) -> str:
