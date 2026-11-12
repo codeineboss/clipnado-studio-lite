@@ -32,6 +32,14 @@ jobs:
           Get-ChildItem assets/ffmpeg -Filter ffprobe.exe -Recurse | Select-Object -First 1 | Copy-Item -Destination tools/ffprobe.exe
           (Resolve-Path tools).Path | Out-File -FilePath $env:GITHUB_PATH -Append
           Invoke-WebRequest https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip -OutFile assets/python-windows.zip
+      - name: Restore native local engines
+        id: engines
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            tools/llama-cli.exe
+            tools/vulkan
+          key: windows-engines-014-${{ hashFiles('scripts/build_windows.ps1', 'scripts/build_local_models.ps1') }}
       - name: Build local speech engine and dependencies
         shell: pwsh
         run: ./scripts/build_windows.ps1 -SkipPackaging -SkipTests
@@ -40,17 +48,28 @@ jobs:
         shell: pwsh
         run: ./scripts/build_local_models.ps1 -Stage Cpu
       - name: Extract Vulkan SDK files without system runtime installation
+        if: steps.engines.outputs.cache-hit != 'true'
         timeout-minutes: 12
         shell: pwsh
         run: ./scripts/build_local_models.ps1 -Stage Sdk
       - name: Build Vulkan Qwen
+        if: steps.engines.outputs.cache-hit != 'true'
         timeout-minutes: 20
         shell: pwsh
         run: ./scripts/build_local_models.ps1 -Stage LlamaVulkan
       - name: Build Vulkan Whisper
+        if: steps.engines.outputs.cache-hit != 'true'
         timeout-minutes: 20
         shell: pwsh
         run: ./scripts/build_local_models.ps1 -Stage WhisperVulkan
+      - name: Save verified-build native engines before regression tests
+        if: steps.engines.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            tools/llama-cli.exe
+            tools/vulkan
+          key: ${{ steps.engines.outputs.cache-primary-key }}
       - name: Run regression suite with actual Whisper and Qwen inference
         env:
           QT_QPA_PLATFORM: offscreen

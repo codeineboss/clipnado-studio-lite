@@ -15,15 +15,18 @@ $Options = @('-DGGML_NATIVE=OFF','-DGGML_AVX=ON','-DGGML_AVX2=OFF','-DGGML_BMI2=
     '-DCMAKE_POLICY_VERSION_MINIMUM=3.10','-DCMAKE_POLICY_DEFAULT_CMP0091=NEW',
     '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded')
 if ($Stage -in @('All','Cpu')) {
-    $Commit = '10e9780154365b191fb43ca4830659ef12def80f'
-    if (-not (Test-Path build/llama-src)) {
-        Checked { git clone --depth 1 --branch b7099 https://github.com/ggml-org/llama.cpp.git build/llama-src }
+    if (-not (Test-Path tools/llama-cli.exe)) {
+        $Commit = '10e9780154365b191fb43ca4830659ef12def80f'
+        if (-not (Test-Path build/llama-src)) {
+            Checked { git clone --depth 1 --branch b7099 https://github.com/ggml-org/llama.cpp.git build/llama-src }
+        }
+        Checked { git -C build/llama-src checkout $Commit }
+        Checked { cmake -S build/llama-src -B build/llama-cpu -G 'Visual Studio 17 2022' -A x64 @Options -DLLAMA_CURL=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_TESTS=OFF }
+        Checked { cmake --build build/llama-cpu --config Release --target llama-cli -j 4 }
+        New-Item -ItemType Directory -Force tools,models | Out-Null
+        Get-ChildItem build/llama-cpu -Filter llama-cli.exe -Recurse | Select-Object -First 1 | Copy-Item -Destination tools/llama-cli.exe
     }
-    Checked { git -C build/llama-src checkout $Commit }
-    Checked { cmake -S build/llama-src -B build/llama-cpu -G 'Visual Studio 17 2022' -A x64 @Options -DLLAMA_CURL=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_TESTS=OFF }
-    Checked { cmake --build build/llama-cpu --config Release --target llama-cli -j 4 }
-    New-Item -ItemType Directory -Force tools,models | Out-Null
-    Get-ChildItem build/llama-cpu -Filter llama-cli.exe -Recurse | Select-Object -First 1 | Copy-Item -Destination tools/llama-cli.exe
+    New-Item -ItemType Directory -Force models | Out-Null
     $Model = 'Qwen_Qwen3-4B-Instruct-2507-Q3_K_M.gguf'
     if (-not (Test-Path "models/$Model")) {
         Checked { curl.exe --fail --location --retry 2 --connect-timeout 30 --max-time 1200 --output "models/$Model.part" "https://huggingface.co/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF/resolve/ae44f08e1392f39c0e474af10c3ff8355c8b6688/$Model" }

@@ -230,7 +230,9 @@ class LocalModelProvider:
                     "category": {"type": "string", "enum": settings.categories}, "reason": {"type": "string", "maxLength": 160}},
                     "required": ["first", "last", "hook", "event", "emotion", "completeness", "category", "reason"],
                     "additionalProperties": False}}}, "required": ["clips"], "additionalProperties": False}
-                with tempfile.TemporaryDirectory(dir=folder) as temp:
+                # Keep the model one parent away: Windows CRT checks the raw
+                # cwd + relative path length before resolving multiple parent jumps.
+                with tempfile.TemporaryDirectory(dir=staged.parent) as temp:
                     work = Path(temp)
                     (work / "system.txt").write_text(system, encoding="utf-8")
                     (work / "prompt.txt").write_text(prompt, encoding="utf-8")
