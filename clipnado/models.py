@@ -154,6 +154,7 @@ class Project:
     schema_version: int = 1
     warnings: list[str] = field(default_factory=list)
     audio_energy: list = field(default_factory=list)
+    analysis_info: dict = field(default_factory=dict)
 
     def validate(self) -> None:
         if self.schema_version != 1:
@@ -162,6 +163,8 @@ class Project:
         self.search.validate()
         self.export.validate()
         self.audio_energy = normalized_energy(self.audio_energy, self.media.duration_ms)
+        if not isinstance(self.analysis_info, dict):
+            raise ValueError("Некорректная диагностика анализа")
         for segment in self.segments:
             segment.validate(self.media.duration_ms)
         ids = set()

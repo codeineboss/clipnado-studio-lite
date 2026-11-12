@@ -23,17 +23,24 @@ def main():
             raise RuntimeError("Packaged runtime diagnostics failed: " + diagnostic.stderr)
         code = r'''
 import sys
+import json
+import httpx
 from pathlib import Path
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from clipnado.app import MainWindow
+import clipnado.app as appmodule
 from clipnado.media import probe
 from clipnado.models import Candidate, SearchSettings
 from clipnado.process import Cancellation
 from clipnado.selection import choose_candidates
+from clipnado.groq_analysis import GroqFreeProvider
 app = QApplication([])
+QMessageBox.question = lambda *_: QMessageBox.Yes
+QMessageBox.information = lambda *_: QMessageBox.Ok
 w = MainWindow()
 assert w.target_count.value() == 10 and w.min_score.value() == 60
+assert w.provider.currentIndex() == 2
 short = [Candidate('x', i * 60000, (i + 1) * 60000, 80, 'Реакция', 'Fixture') for i in range(10)]
 long = [Candidate('x', i * 120000, i * 120000 + 90000, 95, 'Реакция', 'Fixture') for i in range(5)]
 selected = choose_candidates(short + long, SearchSettings(), Cancellation())
@@ -45,6 +52,23 @@ w.show()
 w.play_candidate()
 stage = [0]
 timer = QTimer()
+def mock_api(request):
+    if request.url.path == '/upload/v1beta/files':
+        return httpx.Response(200, headers={'x-goog-upload-url': 'https://generativelanguage.googleapis.com/upload/test'})
+    if request.url.path == '/upload/test':
+        assert request.content
+        return httpx.Response(200, json={'file': {'name': 'files/test', 'state': 'ACTIVE',
+            'uri': 'https://generativelanguage.googleapis.com/v1beta/files/test'}})
+    if request.method in ('GET', 'DELETE'):
+        return httpx.Response(200, json={})
+    item = {'start_ms': 0, 'end_ms': 2000, 'evidence_ms': 1000, 'hook': 20, 'event': 20, 'emotion': 20,
+            'completeness': 20, 'category': 'Реакция', 'reason': 'Mock API fixture'}
+    return httpx.Response(200, json={'candidates': [{'content': {'parts': [{'text': json.dumps({'clips': [item]})}]}}]})
+original_provider = appmodule.GeminiVideoProvider
+appmodule.GeminiVideoProvider = lambda *args, **kwargs: original_provider(*args, **kwargs, transport=httpx.MockTransport(mock_api))
+def unexpected_asr(*args, **kwargs):
+    raise RuntimeError('Video mode started local ASR')
+appmodule.recognize = unexpected_asr
 def check():
     if stage[0] == 0:
         if w.video.frame_count < 1 or w.player.position() < 100 or w.video.image.isNull():
@@ -58,11 +82,20 @@ def check():
         w.export_folder.setText(sys.argv[1])
         stage[0] = 1
         w.export_selected()
-    elif w.task_thread is None:
+    elif stage[0] == 1 and w.task_thread is None:
         if not list(Path(sys.argv[1]).glob('*.mp4')):
             app.exit(4)
             return
         print('PACKAGED_GUI_EXPORT_OK', flush=True)
+        w.provider.setCurrentIndex(2)
+        w.key.setText('SMOKE_TEST_ONLY')
+        w.persist_key = lambda: None
+        stage[0] = 2
+        w.analyze()
+    elif stage[0] == 2 and w.task_thread is None:
+        assert w.project.analysis_info['local_asr_skipped'] and w.project.analysis_info['complete']
+        assert w.project.candidates and w.project.candidates[0].provider.startswith('video:')
+        print('PACKAGED_ONLINE_MOCK_OK', flush=True)
         timer.stop()
         w.dirty = False
         w.close()
@@ -76,7 +109,8 @@ sys.exit(app.exec())
                                 capture_output=True, encoding="utf-8", errors="replace", timeout=120)
         print(result.stdout, flush=True)
         if (result.returncode or "PACKAGED_GUI_EXPORT_OK" not in result.stdout
-                or "PACKAGED_VIDEO_PIXELS_OK" not in result.stdout or "PACKAGED_TARGET_SELECTION_OK" not in result.stdout):
+                or "PACKAGED_VIDEO_PIXELS_OK" not in result.stdout or "PACKAGED_TARGET_SELECTION_OK" not in result.stdout
+                or "PACKAGED_ONLINE_MOCK_OK" not in result.stdout):
             raise RuntimeError("Packaged GUI/export failed: " + result.stderr[-6000:])
 
 

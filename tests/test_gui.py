@@ -24,6 +24,7 @@ def window(app, monkeypatch, tmp_path):
     monkeypatch.setattr(QMessageBox, "information", lambda *_: QMessageBox.Ok)
     monkeypatch.setattr(QMessageBox, "question", lambda *_: QMessageBox.Yes)
     w = MainWindow()
+    w.provider.setCurrentIndex(0)  # Local regressions never use live online services.
     w.errors = []
     w.show_error = w.errors.append
     w.show()
@@ -145,6 +146,55 @@ def test_goal_controls_persist_and_analysis_reports_shortfall(app, window, media
     assert not window.project.candidates
     assert any("0 из целевых 10" in warning for warning in window.project.warnings)
     assert "целевых 10" in window.status.text()
+
+
+@pytest.mark.parametrize("mode", [2, 3])
+def test_online_modes_skip_local_asr_and_keep_results(app, window, media, monkeypatch, mode):
+    from clipnado.models import Candidate
+    from clipnado.video_analysis import VideoAnalysisResult
+    window.media_loaded(media)
+    window.minimum.setValue(1)
+    window.maximum.setValue(8)
+    window.provider.setCurrentIndex(mode)
+    window.key.setText("TEST_SECRET")
+    monkeypatch.setattr(window, "persist_key", lambda: None)
+    def unexpected(*_a, **_kw):
+        pytest.fail("Online analysis started local Whisper")
+    monkeypatch.setattr("clipnado.app.recognize", unexpected)
+    target = "clipnado.app.GeminiVideoProvider.analyze_video" if mode == 2 else "clipnado.app.GroqFreeProvider.analyze_video"
+    def online(self, source, settings, tools, cache, token, progress):
+        progress(50, "Проверка сетевого режима")
+        return VideoAnalysisResult([Candidate(source.source_file_id, 0, 2000, 80, "Реакция", "Тест")],
+            info={"mode": "video" if mode == 2 else "groq-audio", "local_asr_skipped": True, "complete": True,
+                  "checked_windows": 1, "total_windows": 1, "total_seconds": 1},
+            segments=[Segment(0, 2000, "Серверная расшифровка.")] if mode == 3 else None)
+    monkeypatch.setattr(target, online)
+    window.analyze()
+    wait_task(app, window)
+    assert len(window.project.candidates) == window.table.rowCount() == 1
+    assert window.project.analysis_info["local_asr_skipped"]
+    assert not any("Нет расшифровки" in w for w in window.project.warnings)
+    if mode == 3:
+        assert window.project.segments[0].text == "Серверная расшифровка."
+
+
+def test_services_keep_separate_keys_and_deny_upload_without_consent(app, window, media, monkeypatch):
+    window.key.setText("GOOGLE_TEST_SECRET")
+    window.provider.setCurrentIndex(3)
+    assert window.key.text() != "GOOGLE_TEST_SECRET"
+    window.key.setText("GROQ_TEST_SECRET")
+    window.provider.setCurrentIndex(2)
+    assert window.key.text() == "GOOGLE_TEST_SECRET"
+    window.provider.setCurrentIndex(3)
+    assert window.key.text() == "GROQ_TEST_SECRET"
+    window.media_loaded(media)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_: QMessageBox.No)
+    monkeypatch.setattr("clipnado.app.GroqFreeProvider.analyze_video", lambda *_: pytest.fail("Upload without consent"))
+    window.analyze()
+    assert window.task_thread is None and not window.project.candidates
+    window.task_error("GOOGLE_TEST_SECRET GROQ_TEST_SECRET")
+    assert "SECRET" not in window.errors[-1]
+    window.errors.clear()
 
 
 def wait_until(app, predicate, seconds=15):

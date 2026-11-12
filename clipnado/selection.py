@@ -88,7 +88,8 @@ def choose_candidates(candidates: list[Candidate], settings: SearchSettings, tok
     return sorted(selected, key=lambda c: c.start_ms)
 
 
-def shortfall_message(media: MediaInfo, settings: SearchSettings, candidates: list[Candidate], has_text: bool) -> str:
+def shortfall_message(media: MediaInfo, settings: SearchSettings, candidates: list[Candidate], has_text: bool,
+                      audiovisual: bool = False) -> str:
     count = sum(c.score >= settings.min_score for c in candidates)
     if count >= settings.target_count:
         return ""
@@ -99,7 +100,7 @@ def shortfall_message(media: MediaInfo, settings: SearchSettings, candidates: li
     elif capacity < settings.target_count:
         message += (f"При минимальной длине {settings.min_seconds} с исходник вмещает не более {capacity} "
                     "непересекающихся клипов. ")
-    if not has_text:
+    if not has_text and not audiovisual:
         message += "Нет расшифровки для смысловой оценки; аудиопики сами по себе не подтверждают интересный момент. "
     else:
         message += "Другие интервалы не прошли фильтры оценки, границ или повторов. "

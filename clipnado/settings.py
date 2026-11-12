@@ -58,24 +58,25 @@ def read_settings() -> dict:
     try:
         data = json.loads((data_root() / "settings.json").read_text(encoding="utf-8"))
         # Explicit whitelist: never read/write an API key in a JSON file.
-        return {k: v for k, v in data.items() if k in ("tools", "cache", "output", "model")}
+        return {k: v for k, v in data.items() if k in ("tools", "cache", "output", "model", "analysis_mode")}
     except (OSError, ValueError):
         return {}
 
 
-def write_settings(tools: Tools, cache: str, output: str, model: str):
-    atomic_json(data_root() / "settings.json", {"tools": asdict(tools), "cache": cache, "output": output, "model": model})
+def write_settings(tools: Tools, cache: str, output: str, model: str, analysis_mode: int = 0):
+    atomic_json(data_root() / "settings.json", {"tools": asdict(tools), "cache": cache, "output": output,
+                                               "model": model, "analysis_mode": analysis_mode})
 
 
-def load_key() -> str:
+def load_key(service: str = "gemini") -> str:
     try:
         import keyring
-        return keyring.get_password("ClipnadoStudioLite", "gemini") or ""
+        return keyring.get_password("ClipnadoStudioLite", service) or ""
     except Exception:
         return ""
 
 
-def save_key(key: str):
+def save_key(key: str, service: str = "gemini"):
     import keyring
     if os.name == "nt":
         from keyring.backends.Windows import WinVaultKeyring
@@ -85,9 +86,9 @@ def save_key(key: str):
         if "SecretService" not in type(backend).__name__ and "Keyring" != type(backend).__name__:
             raise RuntimeError("Безопасное хранилище недоступно; ключ останется только в памяти до закрытия программы.")
     if key:
-        backend.set_password("ClipnadoStudioLite", "gemini", key)
+        backend.set_password("ClipnadoStudioLite", service, key)
     else:
         try:
-            backend.delete_password("ClipnadoStudioLite", "gemini")
+            backend.delete_password("ClipnadoStudioLite", service)
         except keyring.errors.PasswordDeleteError:
             pass

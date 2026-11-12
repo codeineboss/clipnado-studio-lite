@@ -10,7 +10,7 @@ from .models import Candidate, MediaInfo, SearchSettings, Segment
 from .process import Cancellation
 
 BASE = "https://generativelanguage.googleapis.com/v1beta"
-MODELS = ("gemini-2.5-flash-lite", "gemini-2.5-flash")
+MODELS = ("gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash")
 
 
 class ProviderError(RuntimeError):
