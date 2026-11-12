@@ -1,5 +1,11 @@
 # Clipnado Studio Lite 0.1.0
 
+**[Скачать программу для Windows x64 (≈412 МБ)](https://github.com/Dan1elCarter67/clipnado-studio-lite/releases/download/preview-0.1.0/ClipnadoStudioLite-Windows-x64.zip)** · [Все файлы выпуска](https://github.com/Dan1elCarter67/clipnado-studio-lite/releases/tag/preview-0.1.0)
+
+Полностью распакуйте ZIP и запустите `ClipnadoStudioLite.exe`. Python, FFmpeg и модель включены. Для скачивания закрытого выпуска войдите в GitHub под аккаунтом владельца.
+
+**54 теста прошли на Windows Server 2022 x64**; отдельно проверен сам переносимый пакет: встроенный Python, Qt, интерфейс и настоящий экспорт MP4. [Прогон Windows](https://github.com/Dan1elCarter67/clipnado-studio-lite/actions/runs/43175962514). Целевой физический Xeon/Windows 10 и качество отбора нескольких реальных стримов ещё не проверены. Выпуск предварительный.
+
 Русская настольная программа для отбора непрерывных эпизодов и экспорта заготовок для CapCut. Реализация MVP по ТЗ 2.4. Это версия для проверки на целевой Windows-машине: результаты Linux-тестов не заменяют приёмку на Windows 10 / Xeon E5-2670 / GTX 1660.
 
 ## Переносимый Windows-пакет
@@ -62,8 +68,8 @@ python -m venv .venv
 
 Linux: те же команды с `.venv/bin/python`; для тестов без дисплея — `QT_QPA_PLATFORM=offscreen`.
 
-Нативная сборка Windows: `scripts/build_windows.ps1` (нужны Git, CMake и Visual Studio C++ Build Tools). Опция `-Cuda` требует CUDA Toolkit. Сценарий скачивает фиксированный исходный commit whisper.cpp и модель с проверкой SHA-256. В `.github/workflows/windows.yml` включён ручной workflow для будущей проверки в Windows; здесь он не запускался.
+Нативная сборка Windows: `scripts/build_windows.ps1` (нужны Git, CMake и Visual Studio C++ Build Tools). Опция `-Cuda` требует CUDA Toolkit. Сценарий скачивает фиксированный исходный commit whisper.cpp и модель с проверкой SHA-256. В `.github/workflows/deliver-windows.yml` находится выполненный сценарий: нативная сборка, 54 теста, проверка переносимого пакета и загрузка файлов в Releases.
 
-Переносимый пакет собран без запуска Windows-кода: официальный Windows Embedded Python 3.13.9, Windows wheels PySide6 6.8.3, FFmpeg 8.1.2 Gyan и кросс-сборка whisper.cpp LLVM-MinGW. `scripts/package_portable.py` собирает каталог из этих входов; `MANIFEST.json` содержит контрольные суммы. Исходный код приложения открыт, Qt загружается динамически, компоненты можно заменять.
+Текущий переносимый пакет собран и проверен на Windows Server 2022: официальный Windows Embedded Python 3.13.9, Windows wheels PySide6 6.8.3, FFmpeg 8.1.2 Gyan и нативная MSVC-сборка whisper.cpp/запускателя. `scripts/package_portable.py` собирает каталог из этих входов; `MANIFEST.json` содержит контрольные суммы. Исходный код приложения открыт, Qt загружается динамически, компоненты можно заменять.
 
 Подробные результаты и оставшиеся проверки — в `QA_REPORT.md`. Лицензии и источники зависимостей — в `THIRD_PARTY.md` и `licenses/`.
