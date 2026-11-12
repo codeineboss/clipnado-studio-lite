@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 25
     env:
       QT_QPA_PLATFORM: offscreen
-      CLIPNADO_DATA_DIR: '${{ runner.temp }}/clipnado-data'
+      CLIPNADO_DATA_DIR: '${{ github.workspace }}/.clipnado-test-data'
       CLIPNADO_TEST_WHISPER: '${{ github.workspace }}/tools/whisper-cli.exe'
       CLIPNADO_TEST_MODEL: '${{ github.workspace }}/models/ggml-base.bin'
       GH_TOKEN: '${{ github.token }}'
