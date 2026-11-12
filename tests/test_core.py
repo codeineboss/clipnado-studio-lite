@@ -31,7 +31,7 @@ def test_project_atomic_roundtrip(media, tmp_path):
     path = tmp_path / "проект.json"
     save_project(p, path)
     assert load_project(path).to_dict() == p.to_dict()
-    assert "API" not in path.read_text()
+    assert "API" not in path.read_text(encoding="utf-8")
     p.candidates[0].end_ms = media.duration_ms + 1
     with pytest.raises(ValueError):
         save_project(p, path)
