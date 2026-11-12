@@ -29,6 +29,7 @@ from .models import Candidate, ExportSettings, Project, SearchSettings, Segment,
 from .process import Cancellation, Cancelled, run
 from .preview import VideoPreview
 from .projects import load_project, save_project
+from .selection import shortfall_message
 from .providers import GeminiFreeProvider, MODELS
 from .settings import data_root, load_key, read_settings, restore_tools, save_key, write_settings
 from .subtitles import from_srt
@@ -196,10 +197,17 @@ class MainWindow(QMainWindow):
         search = QGroupBox("01   Поиск эпизодов")
         form = QFormLayout(search)
         self.count = spin(1, 100, 15)
+        self.target_count = spin(1, 100, 10)
+        self.min_score = spin(0, 100, 60)
         self.minimum = spin(1, 600, 60)
         self.maximum = spin(1, 600, 90)
         self.sensitivity = spin(0, 100, 55)
         form.addRow("До кандидатов", self.count)
+        form.addRow("Минимум (цель)", self.target_count)
+        form.addRow("Оценка от", self.min_score)
+        self.target_count.setToolTip("Ищем столько разных эпизодов, если позволяет материал. Оценки ради цели не повышаются.")
+        self.target_count.valueChanged.connect(lambda value: self.count.setValue(max(value, self.count.value())))
+        self.count.valueChanged.connect(lambda value: self.target_count.setValue(min(value, self.target_count.value())))
         durations = QWidget()
         durations_row = QHBoxLayout(durations)
         durations_row.setContentsMargins(0, 0, 0, 0)
@@ -235,7 +243,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(search)
         self.tools_button = button("Проверить FFmpeg / Whisper", self.check_tools)
         sidebar_layout.addWidget(self.tools_button)
-        sidebar_layout.addWidget(note("В локальном режиме оцениваются текст и аудиособытия. Число результатов зависит от записи. Для видео без речи доступен ручной отбор."))
+        sidebar_layout.addWidget(note("Цель по умолчанию: 10 разных клипов с оценкой от 60. При недоборе показывается причина. Локально оцениваются текст и звук; интересность требует просмотра."))
         sidebar_layout.addStretch()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -538,6 +546,8 @@ class MainWindow(QMainWindow):
         self.media_label.setText(f"{Path(m.path).name}  ·  {timecode(m.duration_ms)}  ·  {m.width}×{m.height}  ·  {m.fps:.3f} FPS  ·  {'со звуком' if m.has_audio else 'без звука'}")
         self.media_label.setToolTip(m.path)
         self.count.setValue(p.search.count)
+        self.target_count.setValue(p.search.target_count)
+        self.min_score.setValue(p.search.min_score)
         self.minimum.setValue(p.search.min_seconds)
         self.maximum.setValue(p.search.max_seconds)
         self.sensitivity.setValue(p.search.sensitivity)
@@ -565,7 +575,8 @@ class MainWindow(QMainWindow):
 
     def search_settings(self):
         result = SearchSettings(self.count.value(), self.minimum.value(), self.maximum.value(), self.sensitivity.value(),
-                                [c.text() for c in self.categories if c.isChecked()])
+                                [c.text() for c in self.categories if c.isChecked()],
+                                target_count=self.target_count.value(), min_score=self.min_score.value())
         result.validate()
         return result
 
@@ -598,6 +609,9 @@ class MainWindow(QMainWindow):
                                                        existing_energy=project.audio_energy)
                 progress(82, "Поиск цельных эпизодов…")
                 candidates = provider.analyze(project.media, segments, settings, energy, token)
+                shortfall = shortfall_message(project.media, settings, candidates, bool(segments))
+                if shortfall:
+                    warnings = [*warnings, shortfall]
                 project.segments, project.candidates, project.search = segments, candidates, settings
                 project.audio_energy = energy
                 project.warnings = warnings
@@ -615,7 +629,8 @@ class MainWindow(QMainWindow):
         self.refresh_transcript()
         self.changed()
         self.progress.setValue(100)
-        self.status.setText(f"Анализ завершён: {len(project.candidates)} кандидатов. " + " ".join(project.warnings))
+        self.status.setText(f"Анализ завершён: {len(project.candidates)} клипов, оценка от {project.search.min_score}. "
+                            f"Цель: {project.search.target_count}. " + " ".join(project.warnings))
         if project.warnings:
             QMessageBox.information(self, "Качество поиска", "\n\n".join(project.warnings))
 

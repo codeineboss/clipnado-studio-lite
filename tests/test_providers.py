@@ -74,3 +74,14 @@ def test_connection_check_does_not_generate():
         assert request.method == "GET" and "generateContent" not in str(request.url)
         return httpx.Response(200, json={"name": "models/gemini-2.5-flash"})
     assert "Бесплатность" in provider(handler).check_connection(Cancellation())
+
+
+def test_target_is_requested_but_low_scores_are_never_promoted():
+    def handler(request):
+        body = json.loads(request.content)
+        instruction = body["systemInstruction"]["parts"][0]["text"]
+        assert "минимум 10" in instruction and "оценкой от 60" in instruction
+        assert "не завышай" in instruction
+        clips = [{"start_ms": 0, "end_ms": 60000, "score": 59, "category": "История", "reason": "Недостаточно признаков"}]
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": json.dumps({"clips": clips})}]}}]})
+    assert provider(handler).analyze(MEDIA, TEXT, SearchSettings(sensitivity=100), [], Cancellation()) == []

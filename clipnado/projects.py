@@ -34,10 +34,13 @@ def load_project(path: Path) -> Project:
         raise ValueError("Файл проекта слишком большой")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        search = dict(data.get("search", {}))
+        # An old project may intentionally show fewer than ten candidates.
+        search.setdefault("target_count", min(10, search.get("count", 15)))
         project = Project(media=MediaInfo(**data["media"]),
                           segments=[Segment(**s) for s in data.get("segments", [])],
                           candidates=[Candidate(**c) for c in data.get("candidates", [])],
-                          search=SearchSettings(**data.get("search", {})),
+                          search=SearchSettings(**search),
                           export=ExportSettings(**data.get("export", {})),
                           schema_version=data["schema_version"], warnings=data.get("warnings", []),
                           audio_energy=data.get("audio_energy", []))

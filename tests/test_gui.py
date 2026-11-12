@@ -122,6 +122,31 @@ def test_many_consecutive_background_tasks_release_threads(app, window):
     assert results == list(range(40))
 
 
+def test_goal_controls_persist_and_analysis_reports_shortfall(app, window, media, tmp_path, monkeypatch):
+    window.media_loaded(media)
+    assert window.target_count.value() == 10 and window.min_score.value() == 60
+    window.target_count.setValue(20)
+    assert window.count.value() == 20
+    window.count.setValue(15)
+    assert window.target_count.value() == 15
+    window.target_count.setValue(10)
+    window.min_score.setValue(65)
+    path = tmp_path / "goal.json"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_: (str(path), ""))
+    window.save()
+    wait_task(app, window)
+    window.min_score.setValue(60)
+    window.load_project_path(path)
+    wait_task(app, window)
+    assert window.target_count.value() == 10 and window.min_score.value() == 65
+    monkeypatch.setattr("clipnado.app.recognize", lambda *_args, **_kwargs: ([], [], []))
+    window.analyze()
+    wait_task(app, window)
+    assert not window.project.candidates
+    assert any("0 из целевых 10" in warning for warning in window.project.warnings)
+    assert "целевых 10" in window.status.text()
+
+
 def wait_until(app, predicate, seconds=15):
     limit = time.monotonic() + seconds
     while not predicate() and time.monotonic() < limit:

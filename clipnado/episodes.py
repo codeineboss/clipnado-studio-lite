@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from .models import Candidate, MediaInfo, SearchSettings, Segment
 from .process import Cancellation
+from .selection import choose_candidates, content_words
 
 
 def pattern(expression: str):
@@ -22,7 +23,6 @@ ENDING = pattern(r"\b(?:оказалось|выяснилось|закончил
 QUESTION = pattern(r"\?|\b(?:почему|зачем|кто это|как вас зовут|что (?:ты|вы)|ты ч[её]|вы ч[её])\b")
 PROMO = pattern(r"\b(?:промокод\w*|реклам\w*|подписывайтесь|подпишитесь)\b|\b(?:ставьте лайк|ссылка в описании)\b")
 NEGATED_HUMOR = pattern(r"\b(?:не смешно|не смешной|не шутка|без шуток)\b")
-STOP = set("и в во не на что это как так вот но а мы вы он она они я ты с со у к за по из для или уже еще всё все его ее их мне нам вас нас есть будет был было тут там только потом потому чтобы если когда просто очень да нет ну то бы же ли до про при".split())
 
 
 @dataclass
@@ -48,10 +48,6 @@ class Cue:
                 or ("История" in categories and (self.hook or self.twist)))
 
 
-def content_words(text):
-    return {word for word in re.findall(r"[а-яёa-z]+", text.lower()) if len(word) > 2 and word not in STOP}
-
-
 def select_episodes(media: MediaInfo, segments: list[Segment], settings: SearchSettings,
                     energy, token: Cancellation) -> list[Candidate]:
     segments = sorted(segments, key=lambda s: (s.start_ms, s.end_ms))
@@ -60,8 +56,7 @@ def select_episodes(media: MediaInfo, segments: list[Segment], settings: SearchS
     ends = [s.end_ms for s in segments]
     lo = min(settings.min_seconds * 1000, media.duration_ms)
     hi = min(settings.max_seconds * 1000, media.duration_ms)
-    threshold = 68 - settings.sensitivity * .25
-    ranked = []
+    threshold = max(settings.min_score, 68 - settings.sensitivity * .25)
     evaluated = {}
 
     def evaluate(left, right):
@@ -158,45 +153,32 @@ def select_episodes(media: MediaInfo, segments: list[Segment], settings: SearchS
         evaluated[key] = c
         return c
 
-    for seed, cue in enumerate(cues):
-        token.check()
-        if not cue.anchor(settings.categories):
-            continue
-        # Search phrase boundaries across the entire allowed duration, not just its minimum.
-        left_min = bisect.bisect_left(starts, max(0, ends[seed] - hi))
-        possible_starts = list(range(left_min, seed + 1))
-        def start_priority(index):
-            pause = starts[index] - ends[index - 1] if index else 2000
-            setup = cues[index].question or cues[index].hook
-            return (-(2 * setup + (pause >= 1000)), abs(starts[seed] - starts[index] - lo // 3))
-        possible_starts.sort(key=start_priority)
-        best = None
-        for left in possible_starts[:16]:
+    def retrieve(start_budget, end_budget):
+        for seed, cue in enumerate(cues):
             token.check()
-            end_min = max(ends[seed], starts[left] + lo)
-            end_max = min(media.duration_ms, starts[left] + hi)
-            right_stop = bisect.bisect_right(starts, end_max)
-            eligible = [i for i in range(seed, right_stop) if end_min <= ends[i] <= end_max]
-            # The strongest closing evidence plus nearby sentence endings are enough to bound runtime.
-            eligible.sort(key=lambda i: (-(cues[i].laugh + cues[i].reaction + cues[i].ending), ends[i]))
-            for right in eligible[:20]:
-                candidate = evaluate(left, right)
-                if candidate and (best is None or (candidate.score, -(candidate.end_ms - candidate.start_ms)) >
-                                  (best.score, -(best.end_ms - best.start_ms))):
-                    best = candidate
-        if best:
-            ranked.append(best)
-    selected, texts = [], []
-    for candidate in sorted(ranked, key=lambda c: (-c.score, c.start_ms)):
-        token.check()
-        if any(max(0, min(candidate.end_ms, c.end_ms) - max(candidate.start_ms, c.start_ms)) /
-               min(candidate.end_ms - candidate.start_ms, c.end_ms - c.start_ms) > .15 for c in selected):
-            continue
-        words = content_words(" ".join(s.text for s in segments if s.start_ms < candidate.end_ms and s.end_ms > candidate.start_ms))
-        if len(words) >= 12 and any(len(words & other) / max(1, len(words | other)) >= .8 for other in texts):
-            continue
-        selected.append(candidate)
-        texts.append(words)
-        if len(selected) >= settings.count * 3:
-            break
-    return sorted(selected, key=lambda c: c.start_ms)
+            if not cue.anchor(settings.categories):
+                continue
+            # Search phrase boundaries across the entire allowed duration.
+            left_min = bisect.bisect_left(starts, max(0, ends[seed] - hi))
+            possible_starts = list(range(left_min, seed + 1))
+            def start_priority(index):
+                pause = starts[index] - ends[index - 1] if index else 2000
+                setup = cues[index].question or cues[index].hook
+                return (-(2 * setup + (pause >= 1000)), abs(starts[seed] - starts[index] - lo // 3))
+            possible_starts.sort(key=start_priority)
+            for left in possible_starts[:start_budget]:
+                token.check()
+                end_min = max(ends[seed], starts[left] + lo)
+                end_max = min(media.duration_ms, starts[left] + hi)
+                right_stop = bisect.bisect_right(starts, end_max)
+                eligible = [i for i in range(seed, right_stop) if end_min <= ends[i] <= end_max]
+                eligible.sort(key=lambda i: (-(cues[i].laugh + cues[i].reaction + cues[i].ending), ends[i]))
+                for right in eligible[:end_budget]:
+                    evaluate(left, right)
+        return choose_candidates([c for c in evaluated.values() if c], settings, token)
+
+    selected = retrieve(16, 20)
+    if len(selected) < settings.target_count:
+        # Widen retrieval, never the score floor, before reporting a shortfall.
+        selected = retrieve(64, 40)
+    return selected

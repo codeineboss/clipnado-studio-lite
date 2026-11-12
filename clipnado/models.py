@@ -97,14 +97,18 @@ class SearchSettings:
     max_seconds: int = 90
     sensitivity: int = 55
     categories: list[str] = field(default_factory=lambda: ["История", "Юмор", "Реакция", "Неожиданность"])
+    target_count: int = 10
+    min_score: int = 60
 
     def validate(self) -> None:
-        for name in ("count", "min_seconds", "max_seconds", "sensitivity"):
+        for name in ("count", "min_seconds", "max_seconds", "sensitivity", "target_count", "min_score"):
             setattr(self, name, integer(getattr(self, name), name))
         if not 1 <= self.count <= 100 or not 1 <= self.min_seconds <= self.max_seconds <= 600:
             raise ValueError("Проверьте количество и длительности (1–600 секунд)")
         if not 0 <= self.sensitivity <= 100 or not isinstance(self.categories, list) or not self.categories or not all(isinstance(c, str) for c in self.categories):
             raise ValueError("Выберите категории и чувствительность")
+        if not 1 <= self.target_count <= self.count or not 0 <= self.min_score <= 100:
+            raise ValueError("Цель должна быть от 1 до количества кандидатов, оценка — от 0 до 100")
 
 
 @dataclass

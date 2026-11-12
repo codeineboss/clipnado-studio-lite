@@ -214,6 +214,7 @@ class LocalFallbackProvider:
                 end = min(media.duration_ms, start + lo)
                 candidates.append(Candidate(media.source_file_id, start, end, min(30, round(15 + level * 30)),
                                             "Аудиособытие", "Резкое изменение звука. Смысл не оценён; требуется ручная проверка."))
-            return deduplicate(candidates, settings.count * 3)
+            from .selection import choose_candidates
+            return choose_candidates(candidates, settings, token)
         from .episodes import select_episodes
         return select_episodes(media, segments, settings, energy, token)

@@ -28,8 +28,17 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 from clipnado.app import MainWindow
 from clipnado.media import probe
+from clipnado.models import Candidate, SearchSettings
+from clipnado.process import Cancellation
+from clipnado.selection import choose_candidates
 app = QApplication([])
 w = MainWindow()
+assert w.target_count.value() == 10 and w.min_score.value() == 60
+short = [Candidate('x', i * 60000, (i + 1) * 60000, 80, 'Реакция', 'Fixture') for i in range(10)]
+long = [Candidate('x', i * 120000, i * 120000 + 90000, 95, 'Реакция', 'Fixture') for i in range(5)]
+selected = choose_candidates(short + long, SearchSettings(), Cancellation())
+assert len(selected) == 10 and all(c.score == 80 for c in selected)
+print('PACKAGED_TARGET_SELECTION_OK', flush=True)
 w.show_error = lambda message: (print(message, flush=True), app.exit(2))
 w.media_loaded(probe(Path('demo/demo.mp4'), w.tools))
 w.show()
@@ -66,7 +75,8 @@ sys.exit(app.exec())
         result = subprocess.run([str(python), "-c", code, str(Path(tmp) / "export")], cwd=root, env=env,
                                 capture_output=True, encoding="utf-8", errors="replace", timeout=120)
         print(result.stdout, flush=True)
-        if result.returncode or "PACKAGED_GUI_EXPORT_OK" not in result.stdout or "PACKAGED_VIDEO_PIXELS_OK" not in result.stdout:
+        if (result.returncode or "PACKAGED_GUI_EXPORT_OK" not in result.stdout
+                or "PACKAGED_VIDEO_PIXELS_OK" not in result.stdout or "PACKAGED_TARGET_SELECTION_OK" not in result.stdout):
             raise RuntimeError("Packaged GUI/export failed: " + result.stderr[-6000:])
 
 

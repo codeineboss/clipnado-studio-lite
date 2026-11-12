@@ -23,15 +23,15 @@ def main():
     root = Path(__file__).resolve().parent.parent
     test_xml = root / "qa" / "test-results-windows.xml"
     cases = ET.parse(test_xml).findall(".//testcase")
-    if len(cases) < 62 or any(c.find("failure") is not None or c.find("error") is not None or c.find("skipped") is not None for c in cases):
+    if len(cases) < 80 or any(c.find("failure") is not None or c.find("error") is not None or c.find("skipped") is not None for c in cases):
         raise RuntimeError("Complete Windows regression suite did not pass")
     run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-    report = f"""# Проверка Windows — Clipnado Studio Lite 0.1.1
+    report = f"""# Проверка Windows — Clipnado Studio Lite 0.1.2
 
 Проверка выполнена на GitHub Actions **Windows Server 2022 x64**: {run_url}
 
 - {len(cases)} теста прошли, включая GUI, экспорт H.264/AAC, субтитры, реальные вызовы FFmpeg, распознавание русской речи и кэш.
-- Регрессии 0.1.1: минутные блоки вместо 10-минутных, живой прогресс Whisper, продолжение сохранённых блоков после отмены, реальные пиксели предпросмотра до поиска и воспроизведение без кандидатов.
+- Регрессии 0.1.2: цель 10 клипов с порогом 60, сравнение альтернативных границ для набора, отсутствие повышения оценок и заполнения повторами, объяснение недобора, сохранение новых настроек и аудиопризнаков. На искусственном примере выбор интервалов даёт 10 клипов вместо пяти при жадном отборе; на отдельной составленной расшифровке находится не менее 10 разных эпизодов. Это технические примеры, не оценка интересности реальных видео.
 - Сам переносимый пакет дополнительно проверен через вложенный Windows Embedded Python: импорты Qt, запуск FFmpeg/ffprobe/Whisper, GUI, ручной интервал и настоящий экспорт MP4.
 - whisper.cpp и EXE-запускатель собраны нативно MSVC. Whisper: AVX включён, AVX2/BMI2/FMA/F16C/AVX512/CUDA отключены.
 - ZIP проверен на целостность, контрольные суммы находятся в SHA256SUMS.txt.
@@ -84,9 +84,11 @@ def main():
     shutil.copy2(portable / "QA_REPORT.md", output / "QA_REPORT.md")
     checks = [f"{digest(p)}  {p.name}" for p in sorted(output.iterdir()) if p.is_file() and p.name != "SHA256SUMS.txt"]
     (output / "SHA256SUMS.txt").write_text("\n".join(checks) + "\n", encoding="utf-8")
-    notes = f"""Предварительный выпуск Clipnado Studio Lite 0.1.1.
+    notes = f"""Предварительный выпуск Clipnado Studio Lite 0.1.2.
 
-Исправлено: непрозрачный индикатор 0%, отсутствие первого кадра и блокировка просмотра во время поиска. Блоки распознавания сохраняются после каждой минуты для продолжения после отмены.
+Добавлена цель **10 разных клипов с оценкой от 60**. Отбор сравнивает варианты границ для всего набора, сохраняет контекст и завершение эпизода, исключает текстовые повторы. Оценки ради количества не повышаются; если подходящих эпизодов меньше, программа сообщает недобор. Десять интересных клипов из любого видео не гарантируются: результат зависит от длительности, событий и расшифровки.
+
+Для повторного поиска откройте сохранённый проект, проверьте «Минимум (цель)» = 10 и «Оценка от» = 60, нажмите «Найти эпизоды». Сохранённая расшифровка используется без повторного распознавания. API для локального режима не требуется.
 
 Скачайте **ClipnadoStudioLite-Windows-x64.zip** из Assets, полностью распакуйте и запустите **ClipnadoStudioLite.exe**. Python, FFmpeg и модель Whisper base включены.
 
