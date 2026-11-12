@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1" time="33.933" timestamp="2026-11-11T23:25:51.409300+00:00" hostname="dc125bb4bfdf"><testcase classname="tests.test_asr" name="test_actual_russian_recognition_and_cache" time="33.907" /></testsuite></testsuites>

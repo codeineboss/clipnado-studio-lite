@@ -1,0 +1,121 @@
+import time
+from pathlib import Path
+
+import pytest
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+
+from clipnado.app import MainWindow, STYLE
+from clipnado.models import Segment
+
+
+@pytest.fixture(scope="session")
+def app():
+    result = QApplication.instance() or QApplication([])
+    result.setStyleSheet(STYLE)
+    return result
+
+
+@pytest.fixture
+def window(app, monkeypatch, tmp_path):
+    monkeypatch.setenv("CLIPNADO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(QMessageBox, "information", lambda *_: QMessageBox.Ok)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_: QMessageBox.Yes)
+    w = MainWindow()
+    w.errors = []
+    w.show_error = w.errors.append
+    w.show()
+    app.processEvents()
+    yield w
+    assert w.task_thread is None
+    w.dirty = False
+    w.close()
+
+
+def wait_task(app, window, seconds=30):
+    limit = time.monotonic() + seconds
+    while window.task_thread is not None and time.monotonic() < limit:
+        app.processEvents()
+        QTest.qWait(15)
+    app.processEvents()
+    assert window.task_thread is None, "Task did not finish"
+    assert not window.errors, window.errors
+
+
+def test_gui_manual_export_edit_and_save(app, window, media, tmp_path, monkeypatch):
+    window.media_loaded(media)
+    window.minimum.setValue(2)
+    window.add_manual()
+    assert window.table.rowCount() == 1
+    window.table.item(0, 2).setText("00:00:03.000")
+    window.table.item(0, 1).setText("00:00:01.000")
+    assert window.project.candidates[0].start_ms == 1000
+    assert window.project.candidates[0].end_ms == 3000
+    assert window.project.candidates[0].selected
+    window.project.segments = [Segment(1000, 3000, "Привет, это проверка графического интерфейса.")]
+    window.refresh_transcript()
+    window.transcript.item(0, 2).setText("Исправленный текст")
+    assert window.project.segments[0].text == "Исправленный текст"
+    window.resolution.setCurrentText("720")
+    window.subtitle_mode.setCurrentText("Отдельный SRT")
+    window.export_folder.setText(str(tmp_path / "results"))
+    ticks = []
+    timer = QTimer()
+    timer.timeout.connect(lambda: ticks.append(1))
+    timer.start(10)
+    window.export_selected()
+    assert not window.import_button.isEnabled()
+    assert window.cancel_button.isEnabled()
+    wait_task(app, window)
+    timer.stop()
+    assert len(ticks) >= 5, "GUI was blocked during export"
+    assert list((tmp_path / "results").glob("*.mp4"))
+    assert "Исправленный" in next((tmp_path / "results").glob("*.srt")).read_text(encoding="utf-8-sig")
+    # Change clip limits and export again, reusing transcript and no provider call.
+    window.table.item(0, 2).setText("00:00:02.500")
+    window.export_selected()
+    wait_task(app, window)
+    assert len(list((tmp_path / "results").glob("*.mp4"))) == 2
+    path = tmp_path / "saved.json"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_: (str(path), ""))
+    window.maximum.setValue(4)
+    window.save()
+    wait_task(app, window)
+    assert path.exists() and not window.dirty
+    window.load_project_path(path)
+    wait_task(app, window)
+    assert window.project.candidates[0].end_ms == 2500
+
+
+def test_gui_sort_selection_and_invalid_limits(app, window, media):
+    window.media_loaded(media)
+    window.minimum.setValue(1)
+    window.add_manual()
+    window.player.setPosition(3000)
+    window.add_manual()
+    window.project.candidates[0].score = 20
+    window.project.candidates[1].score = 90
+    window.visible_count = 1
+    window.refresh_candidates()
+    assert window.table.item(0, 3).text() == "90", "Initial chronological view must include the highest-ranked clips"
+    window.visible_count = 2
+    window.sort.setCurrentText("По рейтингу")
+    assert window.table.item(0, 3).text() == "90"
+    window.select_all(False)
+    assert not any(c.selected for c in window.project.candidates)
+    window.table.item(0, 0).setCheckState(Qt.Checked)
+    assert sum(c.selected for c in window.project.candidates) == 1
+    old = window.project.candidates[1].start_ms
+    window.table.item(0, 1).setText("00:00:59.000")
+    assert window.errors
+    assert window.project.candidates[1].start_ms == old
+    window.errors.clear()
+
+
+def test_many_consecutive_background_tasks_release_threads(app, window):
+    results = []
+    for index in range(40):
+        window.start_task(lambda token, progress, value=index: value, results.append)
+        wait_task(app, window)
+    assert results == list(range(40))

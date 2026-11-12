@@ -1,0 +1,76 @@
+{
+	"systeminfo": "WHISPER : COREML = 0 | OPENVINO = 0 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | REPACK = 1 | ",
+	"model": {
+		"type": "base",
+		"multilingual": true,
+		"vocab": 51865,
+		"audio": {
+			"ctx": 1500,
+			"state": 512,
+			"head": 8,
+			"layer": 6
+		},
+		"text": {
+			"ctx": 448,
+			"state": 512,
+			"head": 8,
+			"layer": 6
+		},
+		"mels": 80,
+		"ftype": 1
+	},
+	"params": {
+		"model": "work/tools/ggml-base.bin",
+		"language": "ru",
+		"translate": false
+	},
+	"result": {
+		"language": "ru"
+	},
+	"transcription": [
+		{
+			"timestamps": {
+				"from": "00:00:00,000",
+				"to": "00:00:06,260"
+			},
+			"offsets": {
+				"from": 0,
+				"to": 6260
+			},
+			"text": " В древнем Китае использовали уникальный способ обозначения"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:06,260",
+				"to": "00:00:08,260"
+			},
+			"offsets": {
+				"from": 6260,
+				"to": 8260
+			},
+			"text": " передов времени."
+		},
+		{
+			"timestamps": {
+				"from": "00:00:08,260",
+				"to": "00:00:12,260"
+			},
+			"offsets": {
+				"from": 8260,
+				"to": 12260
+			},
+			"text": " Каждое этап Китая или каждое семья, находившаяся"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:12,260",
+				"to": "00:00:14,440"
+			},
+			"offsets": {
+				"from": 12260,
+				"to": 14440
+			},
+			"text": " у власти, были особой династей."
+		}
+	]
+}

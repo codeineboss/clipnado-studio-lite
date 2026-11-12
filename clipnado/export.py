@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+from pathlib import Path
+
+from .media import Tools, require_space
+from .models import Candidate, ExportSettings, MediaInfo, Segment
+from .process import Cancellation, Progress, run
+from .subtitles import clip_segments, to_ass, to_srt
+
+
+def video_filter(settings: ExportSettings) -> str:
+    settings.validate()
+    width, height = settings.dimensions()
+    zone = int(height * settings.top_fraction) // 2 * 2
+    y = int(height * settings.video_y) // 2 * 2
+    return (f"fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,"
+            f"scale={width}:{zone}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+            f"setsar=1,pad={width}:{zone}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"pad={width}:{height}:0:{y}:color=black,format=yuv420p")
+
+
+def validate_export(path: Path, tools: Tools, settings: ExportSettings, duration_ms: int,
+                    has_audio: bool, token: Cancellation):
+    data = json.loads(run([tools.ffprobe, "-v", "error", "-show_format", "-show_streams", "-of", "json", str(path)], token, timeout=60))
+    streams = data["streams"]
+    video = next(s for s in streams if s["codec_type"] == "video")
+    width, height = settings.dimensions()
+    if (video["width"], video["height"]) != (width, height) or video["codec_name"] != "h264":
+        raise RuntimeError("Проверка экспорта: неверная геометрия или кодек")
+    duration = float(data["format"]["duration"]) * 1000
+    if abs(duration - duration_ms) > max(200, 2000 / settings.fps):
+        raise RuntimeError("Проверка экспорта: неверная длительность")
+    if has_audio:
+        audio = next((s for s in streams if s["codec_type"] == "audio"), None)
+        if not audio or audio["codec_name"] != "aac":
+            raise RuntimeError("Проверка экспорта: отсутствует звук AAC")
+        if abs(float(audio.get("start_time", 0)) - float(video.get("start_time", 0))) > .1:
+            raise RuntimeError("Проверка экспорта: аудио и видео имеют разные стартовые метки")
+    run([tools.ffmpeg, "-v", "error", "-xerror", "-i", str(path), "-f", "null", "-"], token)
+
+
+def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment], settings: ExportSettings,
+                folder: Path, tools: Tools, token: Cancellation, progress: Progress) -> Path:
+    candidate.validate(media)
+    settings.validate()
+    token.check()
+    subtitles = clip_segments(segments, candidate.start_ms, candidate.end_ms)
+    if settings.subtitles != "off" and not subtitles:
+        raise ValueError("В выбранном интервале нет текста для субтитров. Импортируйте SRT или выберите «Выключены».")
+    folder = Path(folder).resolve()
+    duration = candidate.end_ms - candidate.start_ms
+    # Conservative high-quality H.264 estimate; FFmpeg's actual disk errors are also surfaced.
+    require_space(folder, max(100_000_000, duration * 12000))
+    base = f"clip_{candidate.start_ms:010d}_{candidate.end_ms:010d}"
+    number = 0
+    lock = None
+    while True:
+        target = folder / f"{base}{'_' + str(number) if number else ''}.mp4"
+        lock = target.with_suffix(".lock")
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            if target.exists() or target.with_suffix(".srt").exists():
+                lock.unlink()
+                number += 1
+                continue
+            break
+        except FileExistsError:
+            number += 1
+    try:
+        with tempfile.TemporaryDirectory(prefix=".clipnado-", dir=folder) as tmp:
+            stage = Path(tmp)
+            vf = video_filter(settings)
+            if settings.subtitles == "burn":
+                width, height = settings.dimensions()
+                (stage / "subs.ass").write_text(to_ass(subtitles, width, height, settings.subtitle_y,
+                                                        settings.video_y, settings.top_fraction), encoding="utf-8-sig")
+                # Relative ASCII filter paths work with Windows drives, Cyrillic folders and apostrophes.
+                vf += ",ass=filename=subs.ass"
+            args = [tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{candidate.start_ms / 1000:.3f}",
+                    "-i", media.path, "-t", f"{duration / 1000:.3f}", "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
+                    "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", str(settings.quality), "-threads", str(tools.threads),
+                    "-c:a", "aac", "-b:a", "192k", "-af", "aresample=async=1:first_pts=0", "-movflags", "+faststart",
+                    "-map_metadata", "-1", "-progress", "pipe:1", str(stage / "clip.mp4")]
+            run(args, token, cwd=stage, progress=progress, duration_ms=duration)
+            progress(99, "Проверка MP4…")
+            validate_export(stage / "clip.mp4", tools, settings, duration, media.has_audio, token)
+            token.check()
+            # Publish only validated files. Roll back sidecar if the MP4 commit fails.
+            sidecar = target.with_suffix(".srt")
+            if settings.subtitles == "srt":
+                (stage / "clip.srt").write_text(to_srt(subtitles), encoding="utf-8-sig")
+                os.replace(stage / "clip.srt", sidecar)
+            try:
+                os.replace(stage / "clip.mp4", target)
+            except Exception:
+                if settings.subtitles == "srt":
+                    sidecar.unlink(missing_ok=True)
+                raise
+            return target
+    finally:
+        if lock:
+            lock.unlink(missing_ok=True)

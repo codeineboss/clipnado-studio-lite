@@ -1,0 +1,7 @@
+{
+  "dataset": "google/fleurs",
+  "split": "ru_ru/test",
+  "file": "10000611681338527501.wav",
+  "text": "В древнем Китае использовали уникальный способ обозначения периодов времени; каждый этап Китая или каждая семья, находившаяся у власти, были особой династией.",
+  "source": "https://huggingface.co/datasets/google/fleurs/resolve/main/data/ru_ru/audio/test.tar.gz"
+}

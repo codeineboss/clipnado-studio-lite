@@ -1,0 +1,34 @@
+name: Windows validation and native build
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: 'x64'
+      - name: Install FFmpeg
+        shell: pwsh
+        run: |
+          choco install ffmpeg --no-progress -y
+          $ff = (Get-Command ffmpeg).Source
+          Split-Path $ff | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Build, test, package
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          CLIPNADO_DATA_DIR: '${{ runner.temp }}/clipnado-test-data'
+        run: |
+          New-Item -ItemType Directory -Force tools | Out-Null
+          Copy-Item (Get-Command ffmpeg).Source tools/ffmpeg.exe
+          Copy-Item (Get-Command ffprobe).Source tools/ffprobe.exe
+          ./scripts/build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClipnadoStudioLite-Windows-x64
+          path: dist/ClipnadoStudioLite
