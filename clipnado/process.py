@@ -74,7 +74,18 @@ def run(args: list[str], token: Cancellation | None = None, cwd: Path | None = N
             token.check()
         finally:
             if child.poll() is None:
-                child.terminate()
+                if os.name == "nt":
+                    # A Windows venv python.exe can be a redirector that owns a
+                    # second Python process. Killing just the redirector leaves
+                    # that process alive with our log/video files still open.
+                    try:
+                        subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       creationflags=flags, timeout=5, check=False)
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
+                if child.poll() is None:
+                    child.terminate()
                 try:
                     child.wait(timeout=3)
                 except subprocess.TimeoutExpired:

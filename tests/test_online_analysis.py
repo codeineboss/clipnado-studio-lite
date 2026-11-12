@@ -117,7 +117,8 @@ def test_video_full_protocol_cache_resume_and_quota(online_media, tools, tmp_pat
     assert partial.candidates and all("SECRET" not in w for w in partial.warnings)
     assert log[-1] == ("DELETE", "/v1beta/files/test")
     for path in cache.rglob("*.json"):
-        assert "SECRET" not in path.read_text() and "fileUri" not in path.read_text()
+        text = path.read_text(encoding="utf-8")
+        assert "SECRET" not in text and "fileUri" not in text
     log.clear()
     p.transport = httpx.MockTransport(video_handler(log))
     result = p.analyze_video(online_media, SearchSettings(), tools, cache, Cancellation(), lambda *_: None)

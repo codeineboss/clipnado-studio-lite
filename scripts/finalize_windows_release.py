@@ -23,7 +23,7 @@ def main():
     root = Path(__file__).resolve().parent.parent
     test_xml = root / "qa" / "test-results-windows.xml"
     cases = ET.parse(test_xml).findall(".//testcase")
-    if len(cases) < 100 or any(c.find("failure") is not None or c.find("error") is not None or c.find("skipped") is not None for c in cases):
+    if len(cases) < 101 or any(c.find("failure") is not None or c.find("error") is not None or c.find("skipped") is not None for c in cases):
         raise RuntimeError("Complete Windows regression suite did not pass")
     run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     report = f"""# Проверка Windows — Clipnado Studio Lite 0.1.3

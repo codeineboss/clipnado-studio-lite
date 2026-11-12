@@ -1,5 +1,9 @@
 import json
 import math
+import os
+import csv
+import io
+import subprocess
 import sys
 import threading
 import time
@@ -83,6 +87,28 @@ def test_cancel_running_process():
     finally:
         timer.join()
     assert time.monotonic() - start < 5
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-tree cancellation and venv redirectors")
+def test_windows_cancel_stops_descendant_process_and_releases_logs():
+    token, descendants = Cancellation(), []
+    script = ("import subprocess,sys,time;"
+              "p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)']);"
+              "print('DESCENDANT='+str(p.pid),flush=True);time.sleep(30)")
+    def output(text, _):
+        import re
+        match = re.search(r"DESCENDANT=(\d+)", text)
+        if match:
+            descendants.append(int(match[1]))
+            token.cancel()
+    started = time.monotonic()
+    with pytest.raises(Cancelled):
+        run([sys.executable, "-c", script], token, on_output=output, timeout=10)
+    assert descendants and time.monotonic() - started < 5
+    result = subprocess.run(["tasklist", "/FI", f"PID eq {descendants[0]}", "/FO", "CSV", "/NH"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
+    rows = csv.reader(io.StringIO(result.stdout.decode("utf-8", "replace")))
+    assert not any(len(row) > 1 and row[1] == str(descendants[0]) for row in rows)
 
 
 def test_bad_file(tmp_path, tools):
