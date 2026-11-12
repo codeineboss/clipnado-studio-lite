@@ -594,10 +594,12 @@ class MainWindow(QMainWindow):
             project = copy.deepcopy(self.project)
             tools, cache = copy.copy(self.tools), self.cache
             def execute(token, progress):
-                segments, energy, warnings = recognize(project.media, tools, cache, token, progress, project.segments)
+                segments, energy, warnings = recognize(project.media, tools, cache, token, progress, project.segments,
+                                                       existing_energy=project.audio_energy)
                 progress(82, "Поиск цельных эпизодов…")
                 candidates = provider.analyze(project.media, segments, settings, energy, token)
                 project.segments, project.candidates, project.search = segments, candidates, settings
+                project.audio_energy = energy
                 project.warnings = warnings
                 project.validate()
                 return project

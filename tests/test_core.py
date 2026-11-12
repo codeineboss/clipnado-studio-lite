@@ -39,6 +39,26 @@ def test_project_atomic_roundtrip(media, tmp_path):
     assert not list(tmp_path.glob("*.tmp"))
 
 
+def test_project_keeps_audio_features_and_loads_older_projects(media, tmp_path):
+    project = Project(media, audio_energy=[(0, .1), (1000, .7)])
+    path = tmp_path / "with-energy.json"
+    save_project(project, path)
+    assert load_project(path).audio_energy == [[0, .1], [1000, .7]]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["audio_energy"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert load_project(path).audio_energy == []
+
+
+def test_reanalysis_keeps_existing_energy_without_restarting_asr(media, tools, tmp_path, monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Reanalysis started a media/ASR process")
+    monkeypatch.setattr("clipnado.analysis.run", unexpected)
+    segments = [Segment(0, 1000, "Сохранённая реплика")]
+    energy = [[0, .2], [1000, .7]]
+    assert recognize(media, tools, tmp_path, Cancellation(), lambda *_: None, segments, existing_energy=energy)[1] == energy
+
+
 @pytest.mark.parametrize("start,end,score", [(-1, 100, 1), (0, 0, 5), (0, 999999, 5), (0, 100, 101), (float("nan"), 100, 50), (0, 100, 50.5)])
 def test_invalid_candidate(media, start, end, score):
     with pytest.raises(ValueError):

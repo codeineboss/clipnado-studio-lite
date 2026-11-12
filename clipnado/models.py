@@ -12,6 +12,21 @@ def integer(value: Any, name: str) -> int:
     return int(value)
 
 
+def normalized_energy(points, duration_ms: int) -> list[list[float]]:
+    if not isinstance(points, list):
+        raise ValueError("Некорректные аудиопризнаки проекта")
+    result = []
+    for point in points:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            raise ValueError("Некорректные аудиопризнаки проекта")
+        at, level = point
+        at = integer(at, "время аудиопризнака")
+        if not 0 <= at < duration_ms or not isinstance(level, (int, float)) or not math.isfinite(level) or not 0 <= level <= 1:
+            raise ValueError("Некорректные аудиопризнаки проекта")
+        result.append([at, float(level)])
+    return result
+
+
 @dataclass
 class MediaInfo:
     path: str
@@ -134,6 +149,7 @@ class Project:
     export: ExportSettings = field(default_factory=ExportSettings)
     schema_version: int = 1
     warnings: list[str] = field(default_factory=list)
+    audio_energy: list = field(default_factory=list)
 
     def validate(self) -> None:
         if self.schema_version != 1:
@@ -141,6 +157,7 @@ class Project:
         self.media.validate()
         self.search.validate()
         self.export.validate()
+        self.audio_energy = normalized_energy(self.audio_energy, self.media.duration_ms)
         for segment in self.segments:
             segment.validate(self.media.duration_ms)
         ids = set()

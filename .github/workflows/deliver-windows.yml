@@ -54,6 +54,7 @@ jobs:
           python scripts/verify_portable.py build/portable
           if ($LASTEXITCODE -ne 0) { throw 'Portable runtime smoke failed' }
       - name: Package and upload release
+        if: github.ref == 'refs/heads/main'
         shell: pwsh
         run: |
           python scripts/finalize_windows_release.py build/portable output
