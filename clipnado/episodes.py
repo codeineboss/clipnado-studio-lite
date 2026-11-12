@@ -54,6 +54,8 @@ def select_episodes(media: MediaInfo, segments: list[Segment], settings: SearchS
     cues = [Cue.read(s.text) for s in segments]
     starts = [s.start_ms for s in segments]
     ends = [s.end_ms for s in segments]
+    ordered_energy = sorted(energy)
+    energy_times = [at for at, _ in ordered_energy]
     lo = min(settings.min_seconds * 1000, media.duration_ms)
     hi = min(settings.max_seconds * 1000, media.duration_ms)
     threshold = max(settings.min_score, 68 - settings.sensitivity * .25)
@@ -124,7 +126,8 @@ def select_episodes(media: MediaInfo, segments: list[Segment], settings: SearchS
         elif len(unique) / len(words) < .2:
             score -= 12
         # Sound is supporting evidence only and cannot create a speech candidate by itself.
-        levels = [value for at, value in energy if start <= at < end]
+        levels = [value for _, value in ordered_energy[bisect.bisect_left(energy_times, start):
+                                                      bisect.bisect_left(energy_times, end)]]
         if levels:
             ordered = sorted(levels)
             median = ordered[len(ordered) // 2]

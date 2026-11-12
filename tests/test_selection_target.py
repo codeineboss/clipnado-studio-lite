@@ -68,3 +68,11 @@ def test_selection_can_be_cancelled():
     token.cancel()
     with pytest.raises(Cancelled):
         choose_candidates([candidate(0, 60, 80)], SearchSettings(), token)
+
+
+def test_short_repeated_reaction_text_cannot_fill_the_target():
+    source = [candidate(i * 60, (i + 1) * 60, 80) for i in range(10)]
+    for c in source:
+        c.transcript_excerpt = "Почему так вышло? Он ответил неожиданно, все рассмеялись и закончили разговор."
+    result = choose_candidates(source, SearchSettings(), Cancellation())
+    assert len(result) == 1

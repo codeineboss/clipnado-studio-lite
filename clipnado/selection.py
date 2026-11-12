@@ -67,9 +67,11 @@ def choose_candidates(candidates: list[Candidate], settings: SearchSettings, tok
         if any(c.start_ms < other.end_ms and c.end_ms > other.start_ms for other in selected):
             return
         words = content_words(c.transcript_excerpt)
-        if len(words) >= 12 and any(
-            len(other) >= 12 and (len(words & other) / max(1, len(words | other)) >= .8
-                                  or len(words & other) / min(len(words), len(other)) >= .92)
+        if any(
+            (len(words) >= 6 and words == other)
+            or (len(words) >= 12 and len(other) >= 12
+                and (len(words & other) / max(1, len(words | other)) >= .8
+                     or len(words & other) / min(len(words), len(other)) >= .92))
             for other in texts
         ):
             return
