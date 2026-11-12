@@ -9,7 +9,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from .models import MediaInfo
-from .process import Cancellation, run
+from .process import Cancellation, Progress, run
 
 
 @dataclass
@@ -63,10 +63,12 @@ def require_space(folder: Path, bytes_required: int):
         raise OSError("Недостаточно свободного места в выбранной папке")
 
 
-def extract_audio(media: MediaInfo, start_ms: int, duration_ms: int, target: Path, tools: Tools, token: Cancellation):
+def extract_audio(media: MediaInfo, start_ms: int, duration_ms: int, target: Path, tools: Tools, token: Cancellation,
+                  progress: Progress | None = None):
     require_space(target.parent, duration_ms * 32 + 10_000_000)
     run([tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start_ms / 1000:.3f}",
-         "-i", media.path, "-t", f"{duration_ms / 1000:.3f}", "-vn", "-map", "0:a:0", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(target)], token)
+         "-i", media.path, "-t", f"{duration_ms / 1000:.3f}", "-vn", "-map", "0:a:0", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
+         "-progress", "pipe:1", str(target)], token, progress=progress, duration_ms=duration_ms)
 
 
 def thumbnail(media: MediaInfo, time_ms: int, target: Path, tools: Tools, token: Cancellation):

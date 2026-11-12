@@ -32,10 +32,13 @@ class Cancellation:
 
 
 def run(args: list[str], token: Cancellation | None = None, cwd: Path | None = None,
-        progress: Progress | None = None, duration_ms: int = 0, timeout: float = 86400) -> str:
+        progress: Progress | None = None, duration_ms: int = 0, timeout: float = 86400,
+        on_output: Callable[[str, float], None] | None = None) -> str:
     token = token or Cancellation()
     token.check()
     started = time.monotonic()
+    output_offset = 0
+    next_output = started
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     with tempfile.TemporaryDirectory(prefix="clipnado-process-") as temp_dir, open(Path(temp_dir) / "output.log", "w+b") as output:
         try:
@@ -50,6 +53,13 @@ def run(args: list[str], token: Cancellation | None = None, cwd: Path | None = N
                 token.check()
                 if time.monotonic() - started > timeout:
                     raise RuntimeError("Превышено время ожидания внешнего инструмента")
+                if on_output and time.monotonic() >= next_output:
+                    with (Path(temp_dir) / "output.log").open("rb") as reader:
+                        reader.seek(output_offset)
+                        chunk = reader.read(65536)
+                        output_offset = reader.tell()
+                    on_output(chunk.decode("utf-8", "replace"), time.monotonic() - started)
+                    next_output = time.monotonic() + .5
                 if progress and duration_ms:
                     # A separate file descriptor avoids racing the subprocess's output position.
                     log_path = Path(temp_dir) / "output.log"
@@ -71,7 +81,10 @@ def run(args: list[str], token: Cancellation | None = None, cwd: Path | None = N
                     child.kill()
                     child.wait()
         output.seek(0)
-        result = output.read().decode("utf-8", "replace")
+        raw = output.read()
+        result = raw.decode("utf-8", "replace")
+        if on_output:
+            on_output(raw[output_offset:].decode("utf-8", "replace"), time.monotonic() - started)
         if child.returncode:
             raise RuntimeError(f"{Path(args[0]).name}: операция не выполнена.\n{result[-2200:]}")
         return result

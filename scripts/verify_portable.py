@@ -32,15 +32,24 @@ app = QApplication([])
 w = MainWindow()
 w.show_error = lambda message: (print(message, flush=True), app.exit(2))
 w.media_loaded(probe(Path('demo/demo.mp4'), w.tools))
-w.minimum.setValue(2)
-w.add_manual()
-w.resolution.setCurrentText('720')
-w.export_folder.setText(sys.argv[1])
 w.show()
-w.export_selected()
+w.play_candidate()
+stage = [0]
 timer = QTimer()
 def check():
-    if w.task_thread is None:
+    if stage[0] == 0:
+        if w.video.frame_count < 1 or w.player.position() < 100 or w.video.image.isNull():
+            return
+        print('PACKAGED_VIDEO_PIXELS_OK', flush=True)
+        w.player.pause()
+        w.player.setPosition(0)
+        w.minimum.setValue(2)
+        w.add_manual()
+        w.resolution.setCurrentText('720')
+        w.export_folder.setText(sys.argv[1])
+        stage[0] = 1
+        w.export_selected()
+    elif w.task_thread is None:
         if not list(Path(sys.argv[1]).glob('*.mp4')):
             app.exit(4)
             return
@@ -57,7 +66,7 @@ sys.exit(app.exec())
         result = subprocess.run([str(python), "-c", code, str(Path(tmp) / "export")], cwd=root, env=env,
                                 capture_output=True, encoding="utf-8", errors="replace", timeout=120)
         print(result.stdout, flush=True)
-        if result.returncode or "PACKAGED_GUI_EXPORT_OK" not in result.stdout:
+        if result.returncode or "PACKAGED_GUI_EXPORT_OK" not in result.stdout or "PACKAGED_VIDEO_PIXELS_OK" not in result.stdout:
             raise RuntimeError("Packaged GUI/export failed: " + result.stderr[-6000:])
 
 

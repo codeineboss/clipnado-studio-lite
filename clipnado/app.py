@@ -3,12 +3,16 @@ from __future__ import annotations
 import copy
 import os
 import sys
+import tempfile
 from pathlib import Path
 
+# Use software decoding for the pixel preview; it avoids black native D3D surfaces
+# on older drivers. The source and FFmpeg exports are unaffected.
+os.environ.setdefault("QT_FFMPEG_DECODING_HW_DEVICE_TYPES", "")
+
 from PySide6.QtCore import QLibraryInfo, QTimer, Qt, QTranslator, QUrl
-from PySide6.QtGui import QAction, QDesktopServices
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtMultimediaWidgets import QVideoWidget
+from PySide6.QtGui import QAction, QDesktopServices, QImage
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
@@ -20,12 +24,13 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .analysis import LocalFallbackProvider, recognize
 from .export import export_clip
-from .media import Tools, probe
+from .media import Tools, probe, thumbnail
 from .models import Candidate, ExportSettings, Project, SearchSettings, Segment, parse_time, timecode
 from .process import Cancellation, Cancelled, run
+from .preview import VideoPreview
 from .projects import load_project, save_project
 from .providers import GeminiFreeProvider, MODELS
-from .settings import data_root, default_tools, load_key, read_settings, save_key, write_settings
+from .settings import data_root, load_key, read_settings, restore_tools, save_key, write_settings
 from .subtitles import from_srt
 from .workers import Worker
 
@@ -39,6 +44,7 @@ QPushButton:hover { background: #304554; border-color: #78cbb9; }
 QPushButton:disabled { color: #64717e; background: #19222c; }
 QPushButton#primary { background: #66c7ac; color: #08251e; font-weight: 700; border: none; padding: 11px; }
 QPushButton#primary:hover { background: #8de1c9; }
+QPushButton#primary:disabled { background: #263b37; color: #86a398; }
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTextEdit { background: #19242f; border: 1px solid #384958; border-radius: 4px; padding: 5px; selection-background-color: #397965; }
 QComboBox QAbstractItemView { background: #19242f; selection-background-color: #397965; }
 QTableWidget { background: #151f29; alternate-background-color: #1b2732; border: 1px solid #303f4d; gridline-color: #2a3846; selection-background-color: #294f4c; }
@@ -134,10 +140,7 @@ class MainWindow(QMainWindow):
         self.resize(1460, 940)
         self.setMinimumSize(1080, 720)
         settings = read_settings()
-        try:
-            self.tools = Tools(**settings["tools"])
-        except (KeyError, TypeError):
-            self.tools = default_tools()
+        self.tools = restore_tools(settings.get("tools"))
         self.cache = Path(settings.get("cache") or str(data_root() / "cache"))
         self.output = Path(settings.get("output") or str(Path.home() / "Videos" / "Clipnado"))
         self.project = None
@@ -147,6 +150,8 @@ class MainWindow(QMainWindow):
         self.token = None
         self.worker = None
         self.preview_end = None
+        self.poster_jobs = []
+        self.poster_serial = 0
         self.repopulating = False
         self.visible_count = 15
         self.api_key = load_key()
@@ -255,7 +260,8 @@ class MainWindow(QMainWindow):
         bottom.addWidget(self.cancel_button)
         root.addLayout(bottom)
         self.mutating = [self.open_button, self.save_button, self.settings_button, self.import_button, self.relink_button,
-                         self.analyze_button, self.tools_button, self.tabs, sidebar]
+                         self.analyze_button, self.tools_button, sidebar, self.candidate_actions, self.table,
+                         self.transcript_controls, self.transcript, self.export_group, self.export_button, self.more_button]
         for shortcut, callback in (("Ctrl+O", self.open_project), ("Ctrl+S", self.save)):
             action = QAction(self)
             action.setShortcut(shortcut)
@@ -274,7 +280,9 @@ class MainWindow(QMainWindow):
         controls.addWidget(button("＋ Вручную", self.add_manual))
         controls.addWidget(button("Отметить все", lambda: self.select_all(True)))
         controls.addWidget(button("Снять отметки", lambda: self.select_all(False)))
-        layout.addLayout(controls)
+        self.candidate_actions = QWidget()
+        self.candidate_actions.setLayout(controls)
+        layout.addWidget(self.candidate_actions)
         inner = QSplitter(Qt.Vertical)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["✓", "Начало", "Конец", "Оценка", "Категория", "Почему выбран"])
@@ -290,11 +298,11 @@ class MainWindow(QMainWindow):
         inner.addWidget(self.table)
         preview = QWidget()
         preview_layout = QVBoxLayout(preview)
-        self.video = QVideoWidget()
-        self.video.setMinimumHeight(200)
+        self.video = VideoPreview()
         preview_layout.addWidget(self.video, 1)
         transport = QHBoxLayout()
-        self.play_button = button("▶ Фрагмент", self.play_candidate)
+        self.play_button = button("▶ Видео", self.play_candidate)
+        self.play_button.setEnabled(False)
         transport.addWidget(self.play_button)
         transport.addWidget(button("⏸ Пауза", lambda: self.player.pause()))
         self.position = QSlider(Qt.Horizontal)
@@ -303,6 +311,11 @@ class MainWindow(QMainWindow):
         self.position_label = QLabel("00:00:00.000")
         transport.addWidget(self.position_label)
         preview_layout.addLayout(transport)
+        self.preview_status = note("Кадр появится сразу после импорта. Просмотр доступен и во время поиска.")
+        preview_layout.addWidget(self.preview_status)
+        self.still_timer = QTimer(self)
+        self.still_timer.setSingleShot(True)
+        self.still_timer.timeout.connect(lambda: self.request_poster(self.player.position()))
         self.reason = note("Выберите строку. Начало и конец можно изменить прямо в таблице: ЧЧ:ММ:СС.мс.")
         preview_layout.addWidget(self.reason)
         inner.addWidget(preview)
@@ -323,7 +336,9 @@ class MainWindow(QMainWindow):
         row.addWidget(button("Удалить реплику", self.remove_segment))
         row.addWidget(button("Очистить расшифровку", self.clear_transcript))
         row.addStretch()
-        layout.addLayout(row)
+        self.transcript_controls = QWidget()
+        self.transcript_controls.setLayout(row)
+        layout.addWidget(self.transcript_controls)
         self.transcript = QTableWidget(0, 3)
         self.transcript.setHorizontalHeaderLabels(["Начало", "Конец", "Текст (можно исправить)"])
         self.transcript.setColumnWidth(0, 135)
@@ -339,6 +354,7 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         group = QGroupBox("03   Подготовка клипов для CapCut")
+        self.export_group = group
         form = QFormLayout(group)
         self.aspect = combo(["9:16", "16:9", "1:1"])
         self.resolution = combo(["720", "1080"], "1080")
@@ -380,22 +396,69 @@ class MainWindow(QMainWindow):
         self.audio = QAudioOutput(self)
         self.audio.setVolume(.7)
         self.player.setAudioOutput(self.audio)
-        self.player.setVideoOutput(self.video)
+        self.video_sink = QVideoSink(self)
+        self.video_sink.videoFrameChanged.connect(self.video.set_frame)
+        self.player.setVideoSink(self.video_sink)
         self.player.positionChanged.connect(self.position_changed)
-        self.player.errorOccurred.connect(lambda error, text: self.status.setText("Предпросмотр: " + text + ". Экспорт через FFmpeg доступен отдельно."))
+        self.player.errorOccurred.connect(lambda error, text: self.preview_status.setText(
+            "Ошибка воспроизведения: " + text + ". Кадры и экспорт доступны через FFmpeg."))
+
+    def request_poster(self, position=0):
+        if not self.project or self.player.playbackState() == QMediaPlayer.PlayingState:
+            return
+        self.poster_serial += 1
+        serial = self.poster_serial
+        for _, token in self.poster_jobs:
+            token.cancel()
+        media, tools = copy.copy(self.project.media), copy.copy(self.tools)
+        position = max(0, min(int(position), max(0, media.duration_ms - 1000)))
+        folder = self.cache / "preview"
+        target = folder / f"{media.source_file_id}-{position}.png"
+        token = Cancellation()
+        def execute(cancel, progress):
+            folder.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                with tempfile.TemporaryDirectory(dir=folder) as tmp:
+                    image_file = Path(tmp) / "frame.png"
+                    thumbnail(media, position, image_file, tools, cancel)
+                    cancel.check()
+                    if not image_file.is_file():
+                        raise RuntimeError("FFmpeg не извлёк кадр. Попробуйте другую позицию.")
+                    os.replace(image_file, target)
+            return str(target)
+        worker = Worker(execute, token, self)
+        self.poster_jobs.append((worker, token))
+        def ready(path):
+            if (self.project and self.project.media.source_file_id == media.source_file_id
+                    and serial == self.poster_serial and self.player.playbackState() != QMediaPlayer.PlayingState):
+                image = QImage(path)
+                if not image.isNull():
+                    self.video.set_image(image)
+                    self.preview_status.setText("Кадр исходника · нажмите «Видео» или выберите фрагмент")
+        worker.result.connect(ready)
+        worker.error.connect(lambda message: self.preview_status.setText(message) if serial == self.poster_serial else None)
+        worker.finished.connect(lambda: self.poster_done(worker))
+        worker.start()
+
+    def poster_done(self, worker):
+        worker.wait()
+        self.poster_jobs = [(job, token) for job, token in self.poster_jobs if job is not worker]
+        worker.deleteLater()
 
     def start_task(self, function, callback):
         if self.task_thread is not None:
             return
         self.player.pause()
-        self.progress.setValue(0)
+        self.progress.setRange(0, 0)
+        self.status.setText("Задача запущена — подготовка…")
         self.token = Cancellation()
         self.worker = Worker(function, self.token, self)
         self.task_thread = self.worker
         self.worker.progress.connect(self.task_progress)
         self.worker.result.connect(callback)
         self.worker.error.connect(self.task_error)
-        self.worker.cancelled.connect(lambda: self.status.setText("Задача отменена. Уже завершённые экспорты сохранены."))
+        self.worker.cancelled.connect(lambda: self.status.setText(
+            "Задача отменена. Следующий поиск продолжит сохранённые блоки; готовые клипы сохранены."))
         self.task_thread.finished.connect(self.task_done)
         for widget in self.mutating:
             widget.setEnabled(False)
@@ -403,6 +466,7 @@ class MainWindow(QMainWindow):
         self.task_thread.start()
 
     def task_progress(self, percent, message):
+        self.progress.setRange(0, 100 if percent > 0 else 0)
         self.progress.setValue(percent)
         self.status.setText(message)
         if message.startswith("Готов: "):
@@ -423,9 +487,12 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.token = None
         thread.deleteLater()
+        self.progress.setRange(0, 100)
         for widget in self.mutating:
             widget.setEnabled(True)
         self.cancel_button.setEnabled(False)
+        self.analyze_button.setText("Найти эпизоды")
+        self.more_button.setEnabled(bool(self.project and len(self.project.candidates) > self.visible_count))
 
     def cancel_task(self):
         if self.token:
@@ -488,7 +555,10 @@ class MainWindow(QMainWindow):
         self.preview_end = None
         if self.player.source() != url:
             self.player.stop()
+            self.video.clear_image()
             self.player.setSource(url)
+        self.play_button.setEnabled(True)
+        self.request_poster()
         self.position.setRange(0, m.duration_ms)
         self.refresh_candidates()
         self.refresh_transcript()
@@ -531,6 +601,7 @@ class MainWindow(QMainWindow):
                 project.warnings = warnings
                 project.validate()
                 return project
+            self.analyze_button.setText("Поиск выполняется…")
             self.start_task(execute, self.analysis_ready)
         except (ValueError, RuntimeError) as exc:
             self.show_error(exc)
@@ -600,6 +671,8 @@ class MainWindow(QMainWindow):
             self.reason.setText(c.reason + "\n" + c.transcript_excerpt[:500])
             self.player.pause()
             self.player.setPosition(c.start_ms)
+            self.play_button.setText("▶ Фрагмент")
+            self.request_poster(c.start_ms)
 
     def select_all(self, selected):
         if self.project:
@@ -628,11 +701,22 @@ class MainWindow(QMainWindow):
         if c:
             self.preview_end = c.end_ms
             self.player.setPosition(c.start_ms)
-            self.player.play()
+        elif self.project:
+            self.preview_end = None
+            if self.player.position() >= self.project.media.duration_ms - 100:
+                self.player.setPosition(0)
+        else:
+            return
+        self.still_timer.stop()
+        for _, token in self.poster_jobs:
+            token.cancel()
+        self.player.play()
 
     def seek(self, position):
         self.preview_end = None
         self.player.setPosition(position)
+        if self.player.playbackState() != QMediaPlayer.PlayingState:
+            self.still_timer.start(200)
 
     def position_changed(self, position):
         if not self.position.isSliderDown():
@@ -896,6 +980,11 @@ class MainWindow(QMainWindow):
             return
         self.player.stop()
         self.player.setSource(QUrl())
+        self.still_timer.stop()
+        for worker, token in self.poster_jobs:
+            token.cancel()
+        for worker, _ in list(self.poster_jobs):
+            worker.wait()
         event.accept()
 
 

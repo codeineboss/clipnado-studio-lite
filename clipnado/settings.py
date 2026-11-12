@@ -33,6 +33,26 @@ def default_tools() -> Tools:
                  model=str(root / "models" / "ggml-base.bin") if (root / "models" / "ggml-base.bin").exists() else "")
 
 
+def restore_tools(saved: dict | None) -> Tools:
+    defaults = default_tools()
+    try:
+        result = Tools(**saved) if isinstance(saved, dict) else defaults
+    except TypeError:
+        return defaults
+    for field in ("ffmpeg", "ffprobe", "whisper", "model"):
+        value, bundled = getattr(result, field), getattr(defaults, field)
+        if not isinstance(value, str):
+            setattr(result, field, bundled)
+            continue
+        exists = bool(value and (Path(value).is_file() or (field != "model" and shutil.which(value))))
+        if (not exists and value and bundled and Path(bundled).is_file()
+                and Path(value).name.lower() == Path(bundled).name.lower()):
+            # Standard bundled tools from an older extracted version were removed.
+            # Custom models with another name are left as chosen by the user.
+            setattr(result, field, bundled)
+    return result
+
+
 def read_settings() -> dict:
     import json
     try:

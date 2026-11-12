@@ -1,4 +1,5 @@
 import time
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -119,3 +120,47 @@ def test_many_consecutive_background_tasks_release_threads(app, window):
         window.start_task(lambda token, progress, value=index: value, results.append)
         wait_task(app, window)
     assert results == list(range(40))
+
+
+def wait_until(app, predicate, seconds=15):
+    limit = time.monotonic() + seconds
+    while not predicate() and time.monotonic() < limit:
+        app.processEvents()
+        QTest.qWait(20)
+    assert predicate()
+
+
+def test_import_shows_real_pixels_without_candidates_and_can_play_during_analysis(app, window, media):
+    window.media_loaded(media)
+    assert window.table.rowCount() == 0
+    wait_until(app, lambda: not window.video.image.isNull() and not window.poster_jobs)
+    color = window.video.image.pixelColor(10, 10)
+    assert color.red() > 180 and color.green() < 40
+    assert window.video.pixmap() and not window.video.pixmap().isNull()
+    window.start_task(lambda token, progress: (progress(0, "Whisper CPU: ждём первый результат"), token.wait(3)), lambda *_: None)
+    assert window.progress.minimum() == window.progress.maximum() == 0
+    assert not window.import_button.isEnabled()
+    assert window.tabs.isEnabled() and window.play_button.isEnabled()
+    QTest.mouseClick(window.play_button, Qt.LeftButton)
+    wait_until(app, lambda: window.video.frame_count > 0 and window.player.position() > 100)
+    window.player.pause()
+    window.seek(2400)
+    wait_until(app, lambda: not window.still_timer.isActive() and not window.poster_jobs
+               and window.video.image.pixelColor(10, 10).green() > 180)
+    wait_task(app, window)
+
+
+def test_1080p_60fps_preview_with_cyrillic_filename(app, window, tmp_path, tools):
+    from clipnado.media import probe
+    path = tmp_path / "60 кадров кириллица.mp4"
+    subprocess.run([tools.ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=lime:s=1920x1080:r=60:d=2",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-threads", "2", "-pix_fmt", "yuv420p", str(path)], check=True)
+    media = probe(path, tools)
+    assert media.width == 1920 and media.height == 1080 and round(media.fps) == 60
+    window.media_loaded(media)
+    wait_until(app, lambda: not window.video.image.isNull() and not window.poster_jobs)
+    assert window.video.image.pixelColor(10, 10).green() > 180
+    QTest.mouseClick(window.play_button, Qt.LeftButton)
+    wait_until(app, lambda: window.video.frame_count > 0 and window.video.image.width() == 1920)
+    assert window.video.image.pixelColor(10, 10).green() > 180
+    window.player.pause()

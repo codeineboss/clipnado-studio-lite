@@ -10,8 +10,8 @@ import tempfile
 import wave
 from pathlib import Path
 
-from .media import Tools, extract_audio, require_space
-from .models import Candidate, MediaInfo, SearchSettings, Segment
+from .media import Tools, extract_audio, fingerprint, require_space
+from .models import Candidate, MediaInfo, SearchSettings, Segment, timecode
 from .process import Cancellation, Progress, run
 from .projects import atomic_json
 
@@ -21,6 +21,25 @@ LEXICON = {
     "Реакция": ("невероят", "серьёзно", "серьезно", "офиг", "вот это", "победа", "получилось", "обалд", "не верю"),
     "Неожиданность": ("внезапно", "вдруг", "не ожидал", "оказалось", "но тут", "представьте", "секрет", "не повер"),
 }
+
+CHUNK_MS = 60000
+
+
+class SpeechProgress:
+    """Parse real whisper.cpp progress/segment timestamps, including split writes."""
+    def __init__(self, duration_ms: int):
+        self.duration_ms = duration_ms
+        self.processed_ms = 0
+        self.tail = ""
+
+    def feed(self, output: str) -> int:
+        self.tail = (self.tail + output)[-8192:]
+        for value in re.findall(r"progress\s*=\s*(\d+)%", self.tail):
+            self.processed_ms = max(self.processed_ms, self.duration_ms * min(100, int(value)) // 100)
+        for h, m, s, ms in re.findall(r"-->\s*(\d+):(\d+):(\d+)[.,](\d{3})", self.tail):
+            self.processed_ms = max(self.processed_ms, (int(h) * 3600 + int(m) * 60 + int(s)) * 1000 + int(ms))
+        self.processed_ms = min(self.duration_ms, self.processed_ms)
+        return self.processed_ms
 
 
 def deduplicate(candidates: list[Candidate], count: int) -> list[Candidate]:
@@ -34,10 +53,12 @@ def deduplicate(candidates: list[Candidate], count: int) -> list[Candidate]:
     return sorted(selected, key=lambda c: c.start_ms)
 
 
-def audio_energy(path: Path, offset_ms: int) -> list[tuple[int, float]]:
+def audio_energy(path: Path, offset_ms: int, token: Cancellation | None = None) -> list[tuple[int, float]]:
     result = []
     with wave.open(str(path), "rb") as source:
         while data := source.readframes(source.getframerate()):
+            if token:
+                token.check()
             values = array.array("h", data)
             rms = math.sqrt(sum(x * x for x in values) / max(1, len(values))) / 32768
             result.append((offset_ms + len(result) * 1000, rms))
@@ -51,8 +72,9 @@ def recognize(media: MediaInfo, tools: Tools, cache: Path, token: Cancellation, 
     if not media.has_audio:
         return [], [], ["В видео нет аудио. Смысловой поиск недоступен; добавьте интервалы вручную."]
     available = bool(tools.model and Path(tools.model).is_file() and (Path(tools.whisper).is_file() or shutil.which(tools.whisper)))
-    engine_key = f"{Path(tools.model).resolve()}:{Path(tools.model).stat().st_size}:{Path(tools.model).stat().st_mtime_ns}" if available else "audio-only"
-    identity = hashlib.sha256((media.source_file_id + engine_key + ":ru:v3").encode()).hexdigest()
+    # Content identity survives extracting an update to another folder and model relocation.
+    engine_key = fingerprint(Path(tools.model), token) if available else "audio-only"
+    identity = hashlib.sha256((media.source_file_id + engine_key + ":ru:v4").encode()).hexdigest()
     cache_file = cache / f"{identity}.json"
     if cache_file.exists():
         try:
@@ -65,6 +87,29 @@ def recognize(media: MediaInfo, tools: Tools, cache: Path, token: Cancellation, 
             pass
     warnings = [] if available else ["Whisper или модель не настроены: используется только звук. Качество отбора низкое. Можно импортировать SRT."]
     segments, energy = [], []
+    completed_ms = 0
+    checkpoint = cache / f"{identity}.checkpoint.json"
+    if checkpoint.exists():
+        try:
+            saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+            completed_ms = saved["next_start_ms"]
+            if (saved["chunk_ms"] != CHUNK_MS or not isinstance(completed_ms, int)
+                    or not 0 <= completed_ms <= media.duration_ms
+                    or (completed_ms != media.duration_ms and completed_ms % CHUNK_MS)):
+                raise ValueError("Несовместимая контрольная точка")
+            segments = [Segment(**s) for s in saved["segments"]]
+            for segment in segments:
+                segment.validate(completed_ms)
+            energy = saved["energy"]
+            if not isinstance(energy, list) or any(not isinstance(t, (int, float)) or not 0 <= t < completed_ms
+                                                  or not isinstance(e, (int, float)) or not math.isfinite(e)
+                                                  for t, e in energy):
+                raise ValueError("Повреждённый кэш звука")
+        except (KeyError, TypeError, ValueError):
+            completed_ms, segments, energy = 0, [], []
+    progress(int(completed_ms / media.duration_ms * 80),
+             (f"Продолжение с {timecode(completed_ms)[:-4]}. " if completed_ms else "")
+             + ("Подготовка Whisper · CPU без AVX2" if available and not tools.gpu else "Подготовка распознавания/звука…"))
     cache.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=cache) as tmp:
         folder = Path(tmp)
@@ -82,25 +127,38 @@ def recognize(media: MediaInfo, tools: Tools, cache: Path, token: Cancellation, 
                         token.check()
                         destination.write(block)
         # Chunking bounds RAM/disk use for multi-hour recordings; overlapping audio preserves boundary context.
-        for chunk_start in range(0, media.duration_ms, 600000):
+        for chunk_start in range(completed_ms, media.duration_ms, CHUNK_MS):
             token.check()
-            start = max(0, chunk_start - 2000)
-            duration = min(602000, media.duration_ms - start)
-            progress(int(chunk_start / media.duration_ms * 80), f"Распознавание: {chunk_start // 60000} / {media.duration_ms // 60000} мин")
+            start = max(0, chunk_start - 1500)
+            chunk_end = min(media.duration_ms, chunk_start + CHUNK_MS)
+            duration = chunk_end - start
+            percent = int(chunk_start / media.duration_ms * 80)
+            block = f"{chunk_start // CHUNK_MS + 1}/{math.ceil(media.duration_ms / CHUNK_MS)}"
+            progress(percent, f"Извлечение аудио · блок {block} · {timecode(chunk_start)[:-4]}–{timecode(chunk_end)[:-4]}")
             wav = folder / "audio.wav"
-            extract_audio(media, start, duration, wav, tools, token)
-            energy.extend((t, e) for t, e in audio_energy(wav, start) if t >= chunk_start)
+            extract_audio(media, start, duration, wav, tools, token,
+                          progress=lambda value, _: progress(percent, f"Извлечение аудио · блок {block} · {value}%"))
+            progress(percent, f"Анализ звука · блок {block}")
+            energy.extend((t, e) for t, e in audio_energy(wav, start, token) if chunk_start <= t < chunk_end)
             if available:
                 output = folder / "speech"
                 args = [tools.whisper, "-m", "model.bin", "-f", "audio.wav", "-l", "ru", "-oj", "-of", "speech",
-                        "-t", str(tools.threads), "-np", "-bs", "1", "-bo", "1", "-nf"]
+                        "-t", str(tools.threads), "-np", "-pp", "-bs", "1", "-bo", "1", "-nf"]
                 if not tools.gpu:
                     args.append("-ng")
-                run(args, token, cwd=folder)
+                parser = SpeechProgress(duration)
+                def speech_output(text, elapsed):
+                    recognized = max(chunk_start, min(chunk_end, start + parser.feed(text)))
+                    known = int(recognized / media.duration_ms * 80)
+                    waiting = " · ждём первый результат" if parser.processed_ms == 0 else ""
+                    mode = "CPU" if not tools.gpu else "GPU/CPU"
+                    progress(known, f"Whisper {mode} · {timecode(recognized)[:-4]} / {timecode(media.duration_ms)[:-4]}"
+                             f" · блок {block} · прошло {timecode(int(elapsed * 1000))[:-4]}{waiting}")
+                run(args, token, cwd=folder, on_output=speech_output, timeout=1800)
                 data = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
                 for item in data.get("transcription", []):
-                    a = int(item["offsets"]["from"]) + start
-                    b = min(media.duration_ms, int(item["offsets"]["to"]) + start)
+                    a = max(chunk_start, int(item["offsets"]["from"]) + start)
+                    b = min(chunk_end, int(item["offsets"]["to"]) + start)
                     text = item["text"].strip()
                     if b <= a or b <= chunk_start or not text or re.fullmatch(r"[\[\(].*[\]\)]", text):
                         continue
@@ -110,11 +168,16 @@ def recognize(media: MediaInfo, tools: Tools, cache: Path, token: Cancellation, 
                         segments.append(Segment(a, b, text))
                 output.with_suffix(".json").unlink(missing_ok=True)
             wav.unlink(missing_ok=True)
+            atomic_json(checkpoint, {"chunk_ms": CHUNK_MS, "next_start_ms": chunk_end,
+                                    "segments": [s.__dict__ for s in segments], "energy": energy})
+            progress(int(chunk_end / media.duration_ms * 80),
+                     f"Сохранено {timecode(chunk_end)[:-4]} / {timecode(media.duration_ms)[:-4]} · блок {block}")
     if available and not segments:
         warnings.append("Речь не обнаружена. Звуковой поиск не оценивает смысл; проверьте интервалы вручную.")
     elif available and media.duration_ms >= 10000 and sum(len(s.text.split()) for s in segments) < 3:
         warnings.append("Распознано очень мало текста. Проверьте звук, качество модели и расшифровку; смысловой отбор ненадёжен.")
     atomic_json(cache_file, {"segments": [s.__dict__ for s in segments], "energy": energy, "warnings": warnings})
+    checkpoint.unlink(missing_ok=True)
     return segments, energy, warnings
 
 
