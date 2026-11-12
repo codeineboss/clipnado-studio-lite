@@ -8,7 +8,6 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 75
     env:
-      QT_QPA_PLATFORM: offscreen
       CLIPNADO_DATA_DIR: '${{ github.workspace }}/.clipnado-test-data'
       CLIPNADO_TEST_WHISPER: '${{ github.workspace }}/tools/whisper-cli.exe'
       CLIPNADO_TEST_MODEL: '${{ github.workspace }}/models/ggml-base.bin'
@@ -36,10 +35,25 @@ jobs:
       - name: Build local speech engine and dependencies
         shell: pwsh
         run: ./scripts/build_windows.ps1 -SkipPackaging -SkipTests
-      - name: Build local Qwen and Vulkan engines and verify model
+      - name: Build CPU Qwen and verify GGUF
+        timeout-minutes: 25
         shell: pwsh
-        run: ./scripts/build_local_models.ps1
+        run: ./scripts/build_local_models.ps1 -Stage Cpu
+      - name: Extract Vulkan SDK files without system runtime installation
+        timeout-minutes: 12
+        shell: pwsh
+        run: ./scripts/build_local_models.ps1 -Stage Sdk
+      - name: Build Vulkan Qwen
+        timeout-minutes: 20
+        shell: pwsh
+        run: ./scripts/build_local_models.ps1 -Stage LlamaVulkan
+      - name: Build Vulkan Whisper
+        timeout-minutes: 20
+        shell: pwsh
+        run: ./scripts/build_local_models.ps1 -Stage WhisperVulkan
       - name: Run regression suite with actual Whisper and Qwen inference
+        env:
+          QT_QPA_PLATFORM: offscreen
         shell: pwsh
         run: |
           ./.venv/Scripts/python.exe -m pytest -q --junitxml=qa/test-results-windows.xml
