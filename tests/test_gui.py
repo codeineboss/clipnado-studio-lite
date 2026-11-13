@@ -136,6 +136,7 @@ def test_local_only_ui_and_analysis_work_without_network(app, window, media, tmp
     import sys
     window.tools.llama = sys.executable
     window.tools.acceleration = "cpu"
+    monkeypatch.setattr("clipnado.local_llm.prompt_tokens", lambda *_a, **_k: 1000)
     segments = [Segment(0, 1000, "Вопрос ученика."), Segment(1000, 3000, "Необычный ответ учителя."), Segment(3000, 5000, "Ответная реплика.")]
     monkeypatch.setattr("clipnado.app.recognize", lambda *_a, **_k: (segments, [], []))
     def forbidden(*_a, **_kw):

@@ -54,7 +54,9 @@ w.show()
 w.play_candidate()
 stage = [0]
 timer = QTimer()
-def protocol_fixture(*_a, **_kw):
+def protocol_fixture(args, *_a, **_kw):
+    if args[args.index("-n") + 1] == "0":
+        return "main: number of tokens in prompt = 1000"
     return json.dumps({'clips': [{'clip_id': 0, 'hook': 20, 'event': 20, 'emotion': 20,
                                 'completeness': 20, 'category': 'Юмор', 'reason': 'Protocol fixture'}]})
 def check():

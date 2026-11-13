@@ -622,7 +622,8 @@ class MainWindow(QMainWindow):
                 project.analysis_info = {**result.info, "speech_seconds": round(speech_seconds, 2),
                     "selection_seconds": round(time.monotonic() - stage, 2), "total_seconds": round(time.monotonic() - started, 2),
                     "speech_backend": "Vulkan" if tools.gpu else "CPU", "network_used": False}
-                shortfall = shortfall_message(project.media, settings, candidates, bool(segments))
+                shortfall = (shortfall_message(project.media, settings, candidates, bool(segments)) if result.info.get("complete", True)
+                    else f"Проверено {result.info.get('checked_windows', 0)} из {result.info.get('total_windows', 0)} участков. Количество найденных клипов промежуточное; повторный поиск продолжит пропущенные участки.")
                 if shortfall:
                     warnings.append(shortfall)
                 project.segments, project.candidates, project.search = segments, candidates, settings

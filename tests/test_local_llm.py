@@ -15,7 +15,8 @@ from clipnado.selection import choose_candidates
 
 
 @pytest.fixture
-def neural_tools(tmp_path):
+def neural_tools(tmp_path, monkeypatch):
+    monkeypatch.setattr("clipnado.local_llm.prompt_tokens", lambda *_a, **_k: 1000)
     model = tmp_path / "модель тест.gguf"
     model.write_bytes(b"GGUF-test-model")
     return Tools(llama=sys.executable, semantic_model=str(model), acceleration="cpu")
@@ -205,7 +206,7 @@ def test_bad_window_preserves_other_results_and_resumes_only_missing_window(neur
     assert not result.info["complete"] and result.info["failed_windows"] == 1
     assert result.info["checked_windows"] == result.info["total_windows"] - 1
     assert result.candidates and result.warnings
-    assert not list(cache.rglob("window-0.json")) and list(cache.rglob("window-0.failed.json"))
+    assert not [p for p in cache.rglob("window-0-*.json") if not p.name.endswith(".failed.json")] and list(cache.rglob("window-0-*.failed.json"))
     saved_ids = {c.id for c in result.candidates}
     before = len(calls)
     resumed = LocalModelProvider(neural_tools).analyze(media, segments, SearchSettings(), cache, Cancellation(), lambda *_: None)
