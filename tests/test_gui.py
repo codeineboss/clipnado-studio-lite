@@ -143,7 +143,7 @@ def test_local_only_ui_and_analysis_work_without_network(app, window, media, tmp
     monkeypatch.setattr(socket.socket, "connect", forbidden)
     monkeypatch.setattr(socket, "create_connection", forbidden)
     monkeypatch.setattr("clipnado.local_llm.run", lambda *_a, **_kw:
-        '{"clips":[{"first":0,"last":2,"hook":20,"event":20,"emotion":20,"completeness":20,"category":"Юмор","reason":"Вопрос и ответ"}]}')
+        '{"clips":[{"clip_id":0,"hook":20,"event":20,"emotion":20,"completeness":20,"category":"Юмор","reason":"Вопрос и ответ"}]}')
     window.analyze()
     wait_task(app, window)
     assert window.project.candidates and window.project.analysis_info["network_used"] is False

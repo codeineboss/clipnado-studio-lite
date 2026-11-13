@@ -55,7 +55,7 @@ w.play_candidate()
 stage = [0]
 timer = QTimer()
 def protocol_fixture(*_a, **_kw):
-    return json.dumps({'clips': [{'first': 0, 'last': 1, 'hook': 20, 'event': 20, 'emotion': 20,
+    return json.dumps({'clips': [{'clip_id': 0, 'hook': 20, 'event': 20, 'emotion': 20,
                                 'completeness': 20, 'category': 'Юмор', 'reason': 'Protocol fixture'}]})
 def check():
     if stage[0] == 0:

@@ -26,21 +26,22 @@ def main():
     test_xml = root / 'qa' / 'test-results-windows.xml'
     cases = ET.parse(test_xml).findall('.//testcase')
     names = {c.attrib['name'] for c in cases}
-    required = {'test_actual_qwen_semantic_selection_and_cache',
+    required = {'test_actual_qwen_semantic_selection_and_cache', 'test_actual_qwen_coarse_segments_and_cache',
                 'test_windows_cancel_stops_descendant_process_and_releases_logs'}
-    if len(cases) < 84 or not required <= names or any(
+    if len(cases) < 94 or not required <= names or any(
         c.find(tag) is not None for c in cases for tag in ('failure', 'error', 'skipped')
     ):
         raise RuntimeError('Complete Windows regression suite with actual local models did not pass')
     if digest(model) != MODEL_SHA or model.stat().st_size >= 2**31:
         raise RuntimeError('Separate Qwen release asset is invalid')
     run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-    report = f'''# Проверка Clipnado Studio Lite 0.1.4
+    report = f'''# Проверка Clipnado Studio Lite 0.1.5
 
 Windows Server 2022 x64 / GitHub Actions: {run_url}
 
 - {len(cases)} теста прошли без пропусков и ошибок. Проверены GUI, настоящий FFmpeg, экспорт H.264/AAC и субтитров, отмена дочерних процессов, кэш и сохранение проекта.
-- Реальный Whisper распознал человеческую русскую речь; реальная Qwen3-4B выбрала эпизод из составленного русского диалога. Второй запуск использовал кэш. Это проверка выполнения моделей и одного примера, а не точности на пользовательских стримах.
+- Регрессия 0.1.5: Qwen выбирает из заранее проверенных интервалов по ограниченному списку ID. Проверены длинные реплики, паузы, поздние участки видео, повтор неверного ответа и возобновление частичного результата. Некорректный ответ не выдаётся за проверенный участок.
+- Реальный Whisper распознал человеческую русскую речь; реальная Qwen3-4B выбрала эпизод из составленного русского диалога. Второй запуск использовал кэш. Дополнительно настоящая Qwen обработала вариант с двумя крупными репликами по 50 секунд, где старый алгоритм не мог сформировать целиком по репликам клип 60–90 секунд. Это проверка выполнения моделей и двух вариантов одного примера, а не точности на пользовательских стримах.
 - Переносимый пакет отдельно запущен через вложенный Python: Qt, видеокадры, воспроизведение, настоящий экспорт MP4, загрузка GGUF и генерация одного токена настоящей Qwen. Полный диалог проверен тестом выше; GUI-проводка анализа дополнительно проверена с подменённым ответом CLI при заблокированных Python-соединениях.
 - CPU и Vulkan-движки Whisper/llama.cpp собраны MSVC. AVX включён, AVX2/BMI2/FMA/F16C/AVX512 выключены. Vulkan использует установленный драйвер; CUDA и сервер/API не нужны.
 - GGUF поставляется отдельным файлом, его SHA-256 проверен. ZIP проверен на целостность; суммы всех файлов выпуска — в SHA256SUMS.txt.
@@ -83,9 +84,11 @@ Windows Server 2022 x64 / GitHub Actions: {run_url}
               if p.is_file() and p.name not in ('SHA256SUMS.txt', 'release-notes.md')]
     checks.append(f'{MODEL_SHA}  {model.name}')
     (output / 'SHA256SUMS.txt').write_text('\n'.join(checks) + '\n', encoding='utf-8')
-    notes = f'''Clipnado Studio Lite 0.1.4 — полностью локальные Whisper + Qwen3-4B.
+    notes = f'''Clipnado Studio Lite 0.1.5 — полностью локальные Whisper + Qwen3-4B.
 
-API, ввод ключей и облачные клиенты удалены. Вместо прежнего отбора по ключевым словам теперь работает локальная смысловая модель Qwen: анализирует перекрывающиеся участки расшифровки, оценивает события и завершённость. Цель — 10 неповторяющихся клипов с оценкой от 60, без искусственного повышения баллов. Код приложения написан самостоятельно, код Supoclip не включён.
+Исправлена ошибка «Qwen предложила только неверные границы». Программа заранее готовит интервалы допустимой длины, модель выбирает их по ID. Грубая разметка длинных реплик больше не исключает все варианты. Границы внутри реплик отмечены для просмотра. Некорректный ответ автоматически проверяется повторно; при повторной ошибке остальные участки сохраняются, результат явно отмечается частичным, следующий поиск продолжает пропущенное.
+
+Whisper, Qwen и CPU/Vulkan-движки те же: уже скачанный GGUF можно использовать повторно. Сохранённая расшифровка и кэш распознавания подходят; отбор Qwen пересчитается по новому протоколу. API и ключи не нужны. Цель 10 клипов с оценкой от 60 сохраняется без искусственного повышения баллов.
 
 **Для установки скачайте два файла из Assets:**
 1. Полностью распакуйте **ClipnadoStudioLite-Windows-x64.zip**.

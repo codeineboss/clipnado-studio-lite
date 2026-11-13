@@ -641,7 +641,8 @@ class MainWindow(QMainWindow):
         self.refresh_transcript()
         self.changed()
         self.progress.setValue(100)
-        self.status.setText(f"Анализ завершён: {len(project.candidates)} клипов, оценка от {project.search.min_score}. "
+        heading = "Анализ завершён" if project.analysis_info.get("complete", True) else "Анализ завершён частично"
+        self.status.setText(f"{heading}: {len(project.candidates)} клипов, оценка от {project.search.min_score}. "
                             f"Цель: {project.search.target_count}. " + " ".join(project.warnings))
         if project.warnings:
             QMessageBox.information(self, "Качество поиска", "\n\n".join(project.warnings))
