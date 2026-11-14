@@ -77,6 +77,7 @@ class Candidate:
     version: int = 1
     id: str = field(default_factory=lambda: uuid4().hex)
     selected: bool = False
+    match_score: int | None = None
 
     def validate(self, media: MediaInfo) -> None:
         self.start_ms = integer(self.start_ms, "начало клипа")
@@ -84,6 +85,10 @@ class Candidate:
         self.score = integer(self.score, "рейтинг")
         if self.source_file_id != media.source_file_id or not 0 <= self.start_ms < self.end_ms <= media.duration_ms:
             raise ValueError("Клип выходит за границы видео или относится к другому исходнику")
+        if self.match_score is not None:
+            self.match_score = integer(self.match_score, "соответствие запросу")
+            if not 0 <= self.match_score <= 100:
+                raise ValueError("Соответствие запросу должно быть от 0 до 100")
         if not 0 <= self.score <= 100:
             raise ValueError("Рейтинг должен быть от 0 до 100")
         if not all(isinstance(x, str) for x in (self.category, self.reason, self.transcript_excerpt, self.provider, self.id)):
@@ -99,8 +104,12 @@ class SearchSettings:
     categories: list[str] = field(default_factory=lambda: ["История", "Юмор", "Реакция", "Неожиданность"])
     target_count: int = 10
     min_score: int = 60
+    query: str = ""
 
     def validate(self) -> None:
+        if not isinstance(self.query, str) or len(self.query) > 500:
+            raise ValueError("Поисковый запрос: не более 500 символов")
+        self.query = self.query.strip()
         for name in ("count", "min_seconds", "max_seconds", "sensitivity", "target_count", "min_score"):
             setattr(self, name, integer(getattr(self, name), name))
         if not 1 <= self.count <= 100 or not 1 <= self.min_seconds <= self.max_seconds <= 600:
@@ -121,6 +130,7 @@ class ExportSettings:
     video_y: float = 0.0
     subtitles: str = "off"
     subtitle_y: float = 0.31
+    layout: str = "top_black"
 
     def validate(self) -> None:
         for name in ("resolution", "fps", "quality"):
@@ -131,11 +141,13 @@ class ExportSettings:
             raise ValueError("Неверный формат экспорта")
         if self.fps not in (24, 25, 30, 50, 60) or not 16 <= self.quality <= 28:
             raise ValueError("Неверная частота кадров или качество")
-        if not 0.2 <= self.top_fraction <= 1 or not 0 <= self.video_y <= 1 - self.top_fraction + 1e-9:
+        if self.layout not in ("top_black", "blur_center"):
+            raise ValueError("Неизвестное оформление видео")
+        if self.layout == "top_black" and (not 0.2 <= self.top_fraction <= 1 or not 0 <= self.video_y <= 1 - self.top_fraction + 1e-9):
             raise ValueError("Верхняя зона выходит за холст")
         if self.subtitles not in ("off", "srt", "burn") or not 0 <= self.subtitle_y <= 1:
             raise ValueError("Неверные настройки субтитров")
-        if self.subtitles == "burn" and not self.video_y <= self.subtitle_y < self.video_y + self.top_fraction:
+        if self.layout == "top_black" and self.subtitles == "burn" and not self.video_y <= self.subtitle_y < self.video_y + self.top_fraction:
             raise ValueError("Субтитры должны находиться в зоне видео")
 
     def dimensions(self) -> tuple[int, int]:
@@ -155,6 +167,9 @@ class Project:
     warnings: list[str] = field(default_factory=list)
     audio_energy: list = field(default_factory=list)
     analysis_info: dict = field(default_factory=dict)
+    query_results: list[Candidate] = field(default_factory=list)
+    last_query: str = ""
+    query_info: dict = field(default_factory=dict)
 
     def validate(self) -> None:
         if self.schema_version != 1:
@@ -165,6 +180,10 @@ class Project:
         self.audio_energy = normalized_energy(self.audio_energy, self.media.duration_ms)
         if not isinstance(self.analysis_info, dict):
             raise ValueError("Некорректная диагностика анализа")
+        if not isinstance(self.last_query, str) or len(self.last_query) > 500 or not isinstance(self.query_info, dict):
+            raise ValueError("Некорректные данные поиска по содержанию")
+        for candidate in self.query_results:
+            candidate.validate(self.media)
         for segment in self.segments:
             segment.validate(self.media.duration_ms)
         ids = set()

@@ -43,7 +43,9 @@ def load_project(path: Path) -> Project:
                           search=SearchSettings(**search),
                           export=ExportSettings(**data.get("export", {})),
                           schema_version=data["schema_version"], warnings=data.get("warnings", []),
-                          audio_energy=data.get("audio_energy", []), analysis_info=data.get("analysis_info", {}))
+                          audio_energy=data.get("audio_energy", []), analysis_info=data.get("analysis_info", {}),
+                          query_results=[Candidate(**c) for c in data.get("query_results", [])],
+                          last_query=data.get("last_query", ""), query_info=data.get("query_info", {}))
         project.validate()
         return project
     except (KeyError, TypeError, ValueError) as exc:

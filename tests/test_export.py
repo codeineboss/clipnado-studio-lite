@@ -111,3 +111,41 @@ def test_anamorphic_aspect_is_preserved(tools, tmp_path):
     image = frame(out, tools)
     rows = [y for y in range(512) if image[(y * 720 + 360) * 3] > 150]
     assert abs(len(rows) - 720 / (32 / 9)) < 6
+
+
+@pytest.mark.parametrize("aspect,subs", [("9:16", "off"), ("1:1", "burn"), ("16:9", "srt")])
+def test_blurred_center_export_geometry_background_and_subtitles(media, tools, tmp_path, aspect, subs):
+    settings = ExportSettings(aspect=aspect, resolution=720, layout="blur_center", subtitles=subs, subtitle_y=.7)
+    c = Candidate(media.source_file_id, 1000, 4000, 80, "История", "Тест")
+    out = export_clip(media, c, [Segment(500, 5000, "Кириллические субтитры по центру.")], settings,
+                      tmp_path / "Размытый фон ' тест", tools, Cancellation(), lambda *_: None)
+    info = probe(out, tools)
+    width, height = settings.dimensions()
+    assert (info.width, info.height, round(info.fps)) == (width, height, 30)
+    image = frame(out, tools, .2)
+    # The red source also fills the surrounding background; no reserved black zone.
+    for y in (int(height*.1),height//2,int(height*.9)):
+        pixel = (y*width+width//2)*3
+        assert image[pixel] > 150 and image[pixel+1] < 50
+    if subs == "burn":
+        assert sum(1 for r,g,b in zip(image[::3],image[1::3],image[2::3]) if min(r,g,b)>180) > 100
+    if subs == "srt": assert out.with_suffix(".srt").exists()
+    # Same-source flash remains synchronized in foreground and background.
+    during = frame(out, tools, 1.2)
+    for y in (int(height*.1), height//2):
+        pixel=(y*width+width//2)*3
+        assert during[pixel+1]>200
+
+
+def test_blur_keeps_center_sharp_and_smooths_background(tools, tmp_path):
+    path = tmp_path / "checker.mp4"
+    subprocess.run([tools.ffmpeg,"-v","error","-f","lavfi","-i",
+        "nullsrc=s=320x180:r=30:d=1,geq=r='255*mod(floor(X/8)+floor(Y/8),2)':g='255*mod(floor(X/8)+floor(Y/8),2)':b='255*mod(floor(X/8)+floor(Y/8),2)'",
+        "-c:v","libx264","-threads","2","-pix_fmt","yuv420p",str(path)],check=True)
+    media = probe(path,tools)
+    out=export_clip(media,Candidate(media.source_file_id,0,1000,80,"Юмор","Тест"),[],ExportSettings(resolution=720,layout="blur_center"),tmp_path,tools,Cancellation(),lambda *_:None)
+    image=frame(out,tools,.2)
+    def contrast(y):
+        values=[image[(y*720+x)*3] for x in range(40,680)]
+        return sum(abs(values[i]-values[i-1]) for i in range(1,len(values))) / (len(values)-1)
+    assert contrast(640)>contrast(100)*4, "Foreground lost sharpness or background was not blurred"

@@ -57,8 +57,11 @@ timer = QTimer()
 def protocol_fixture(args, *_a, **_kw):
     if args[args.index("-n") + 1] == "0":
         return "main: number of tokens in prompt = 1000"
-    return json.dumps({'clips': [{'clip_id': 0, 'hook': 20, 'event': 20, 'emotion': 20,
-                                'completeness': 20, 'category': 'Юмор', 'reason': 'Protocol fixture'}]})
+    item = {'clip_id': 0, 'hook': 20, 'event': 20, 'emotion': 20,
+            'completeness': 20, 'category': 'Юмор', 'reason': 'Protocol fixture'}
+    if 'Это поиск по содержанию' in (Path(_kw['cwd']) / 'system.txt').read_text(encoding='utf-8'):
+        item['relevance'] = 90
+    return json.dumps({'clips': [item]})
 def check():
     if stage[0] == 0:
         if w.video.frame_count < 1 or w.player.position() < 100 or w.video.image.isNull():
@@ -69,11 +72,13 @@ def check():
         w.minimum.setValue(2)
         w.add_manual()
         w.resolution.setCurrentText('720')
+        w.export_layout.setCurrentIndex(1)
         w.export_folder.setText(sys.argv[1])
         stage[0] = 1
         w.export_selected()
     elif stage[0] == 1 and w.task_thread is None:
         assert list(Path(sys.argv[1]).glob('*.mp4'))
+        assert w.project.export.layout == 'blur_center'
         print('PACKAGED_GUI_EXPORT_OK', flush=True)
         w.project.segments = [Segment(0, 1000, 'Вопрос'), Segment(1000, 2000, 'Ответ')]
         llm.run = protocol_fixture
@@ -83,6 +88,23 @@ def check():
         assert w.project.analysis_info['network_used'] is False
         assert w.project.candidates and w.project.candidates[0].provider.startswith('local-qwen:')
         print('PACKAGED_LOCAL_WORKFLOW_OK', flush=True)
+        stage[0] = 3
+        w.content_query.setText('необычный ответ')
+        w.find_by_content()
+    elif stage[0] == 3 and w.task_thread is None:
+        assert w.project.last_query == 'необычный ответ' and w.project.query_results[0].match_score == 90
+        assert len(w.project.candidates) == 1 and w.assistant_dialog
+        w.assistant_dialog.apply_selected()  # identical intervals are deduplicated
+        assert len(w.project.candidates) == 1
+        print('PACKAGED_CONTENT_QUERY_PROTOCOL_OK', flush=True)
+        w.table.selectRow(0)
+        stage[0] = 4
+        w.refine_selected()
+    elif stage[0] == 4 and w.task_thread is None:
+        assert w.assistant_dialog and len(w.project.candidates) == 1
+        assert (w.project.candidates[0].start_ms, w.project.candidates[0].end_ms) == (0, 2000)
+        w.close_assistant_dialog()
+        print('PACKAGED_BOUNDARY_REVIEW_PROTOCOL_OK', flush=True)
         timer.stop()
         w.dirty = False
         w.close()
@@ -95,7 +117,8 @@ sys.exit(app.exec())
         result = subprocess.run([str(python), "-c", code, str(Path(tmp) / "export")], cwd=root, env=env,
                                 capture_output=True, encoding="utf-8", errors="replace", timeout=360)
         print(result.stdout, flush=True)
-        required = ("PACKAGED_ACTUAL_QWEN_TOKEN_OK", "PACKAGED_VIDEO_PIXELS_OK", "PACKAGED_GUI_EXPORT_OK", "PACKAGED_LOCAL_WORKFLOW_OK")
+        required = ("PACKAGED_ACTUAL_QWEN_TOKEN_OK", "PACKAGED_VIDEO_PIXELS_OK", "PACKAGED_GUI_EXPORT_OK", "PACKAGED_LOCAL_WORKFLOW_OK",
+                    "PACKAGED_CONTENT_QUERY_PROTOCOL_OK", "PACKAGED_BOUNDARY_REVIEW_PROTOCOL_OK")
         if result.returncode or not all(tag in result.stdout for tag in required):
             raise RuntimeError("Packaged local runtime verification failed: " + result.stderr[-3000:])
 

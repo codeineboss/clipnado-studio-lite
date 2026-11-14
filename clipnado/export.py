@@ -14,6 +14,15 @@ from .subtitles import clip_segments, to_ass, to_srt
 def video_filter(settings: ExportSettings) -> str:
     settings.validate()
     width, height = settings.dimensions()
+    if settings.layout == "blur_center":
+        # Downscale only the background before Gaussian blur. Both branches
+        # originate from the same frame/PTS; the foreground remains uncropped.
+        bw, bh = max(2, width // 8 * 2), max(2, height // 8 * 2)
+        return (f"fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,split=2[bgsrc][fgsrc];"
+                f"[bgsrc]scale={bw}:{bh}:force_original_aspect_ratio=increase:force_divisible_by=2,"
+                f"crop={bw}:{bh},gblur=sigma=12:steps=2,scale={width}:{height},setsar=1[bg];"
+                f"[fgsrc]scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[fg];"
+                "[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1,format=yuv420p")
     zone = int(height * settings.top_fraction) // 2 * 2
     y = int(height * settings.video_y) // 2 * 2
     return (f"fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,"
@@ -77,12 +86,13 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
             if settings.subtitles == "burn":
                 width, height = settings.dimensions()
                 (stage / "subs.ass").write_text(to_ass(subtitles, width, height, settings.subtitle_y,
-                                                        settings.video_y, settings.top_fraction), encoding="utf-8-sig")
+                                                        0 if settings.layout == "blur_center" else settings.video_y,
+                                                        1 if settings.layout == "blur_center" else settings.top_fraction), encoding="utf-8-sig")
                 # Relative ASCII filter paths work with Windows drives, Cyrillic folders and apostrophes.
                 vf += ",ass=filename=subs.ass"
             args = [tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{candidate.start_ms / 1000:.3f}",
                     "-i", media.path, "-t", f"{duration / 1000:.3f}", "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
-                    "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", str(settings.quality), "-threads", str(tools.threads),
+                    "-filter_threads", str(tools.threads), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", str(settings.quality), "-threads", str(tools.threads),
                     "-c:a", "aac", "-b:a", "192k", "-af", "aresample=async=1:first_pts=0", "-movflags", "+faststart",
                     "-map_metadata", "-1", "-progress", "pipe:1", str(stage / "clip.mp4")]
             run(args, token, cwd=stage, progress=progress, duration_ms=duration)

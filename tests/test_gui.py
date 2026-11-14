@@ -223,3 +223,128 @@ def test_1080p_60fps_preview_with_cyrillic_filename(app, window, tmp_path, tools
     wait_until(app, lambda: window.video.frame_count > 0 and window.video.image.width() == 1920)
     assert window.video.image.pixelColor(10, 10).green() > 180
     window.player.pause()
+
+
+def test_content_search_preserves_main_clips_and_adds_only_on_click(app, window, media, tmp_path, monkeypatch):
+    import copy
+    from clipnado.models import Candidate
+    from clipnado.local_llm import LocalAnalysisResult
+    window.media_loaded(media)
+    window.minimum.setValue(1); window.maximum.setValue(8)
+    window.add_manual()
+    original = copy.deepcopy(window.project.candidates)
+    segments = [Segment(0, 4000, "Не согласен с твоим объяснением."), Segment(4000, 8000, "Почему? Давай обсудим.")]
+    result_clip = Candidate(media.source_file_id, 2000, 6000, 80, "История", "Совпадение по смыслу", match_score=90)
+    calls = []
+    monkeypatch.setattr("clipnado.app.prepare_backend", lambda tools, *_: (tools, []))
+    monkeypatch.setattr("clipnado.app.recognize", lambda *_a, **_k: (segments, [], []))
+    def analyze(self, m, segs, settings, *args):
+        calls.append(settings.query)
+        return LocalAnalysisResult([copy.deepcopy(result_clip)], [], {"complete": True, "mode": "local-qwen", "query": settings.query})
+    monkeypatch.setattr("clipnado.app.LocalModelProvider.analyze", analyze)
+    window.content_query.setText("где спорят")
+    window.find_by_content(); wait_task(app, window)
+    assert calls == ["где спорят"] and window.project.candidates == original
+    assert window.project.query_results[0].match_score == 90 and window.project.last_query == "где спорят"
+    dialog = window.assistant_dialog
+    add = dialog.apply_callback
+    dialog.apply_selected(); app.processEvents()
+    assert len(window.project.candidates) == 2 and window.project.candidates[0] == original[0]
+    assert window.project.candidates[1].selected and window.project.candidates[1].id != result_clip.id
+    assert add([result_clip]) and len(window.project.candidates) == 2
+    window.analyze(); wait_task(app, window)
+    assert calls[-1] == "", "Typed content query must not change the normal search mode"
+    assert window.project.last_query == "где спорят" and window.project.query_results
+
+
+def test_boundary_review_apply_and_undo_keep_clip_identity(app, window, media):
+    import copy
+    from clipnado.models import Candidate
+    from clipnado.local_llm import LocalAnalysisResult
+    window.media_loaded(media)
+    window.minimum.setValue(2); window.add_manual()
+    anchor = copy.deepcopy(window.project.candidates[0])
+    alternative = Candidate(media.source_file_id, 1000, 4000, 80, "Юмор", "Сохранена развязка")
+    segments = [Segment(0, 8000, "Диалог для предпросмотра")]
+    window.boundaries_ready(anchor, media.source_file_id, LocalAnalysisResult([alternative], [], {"complete": True}), segments, [])
+    assert window.project.candidates[0] == anchor
+    window.assistant_dialog.apply_selected(); app.processEvents()
+    changed = window.project.candidates[0]
+    assert changed.id == anchor.id and changed.selected == anchor.selected and changed.start_ms == 1000 and changed.end_ms == 4000
+    window.undo_boundaries()
+    assert window.project.candidates[0] == anchor
+
+
+def test_stale_boundary_proposal_is_rejected(app, window, media):
+    import copy
+    from clipnado.models import Candidate
+    from clipnado.local_llm import LocalAnalysisResult
+    window.media_loaded(media)
+    window.minimum.setValue(2); window.add_manual()
+    anchor = copy.deepcopy(window.project.candidates[0])
+    alternative = Candidate(media.source_file_id, 1000, 4000, 80, "Юмор", "Вариант")
+    window.boundaries_ready(anchor, media.source_file_id, LocalAnalysisResult([alternative]), [Segment(0, 8000, "Диалог")], [])
+    window.project.candidates[0].end_ms = 2500
+    window.assistant_dialog.apply_selected()
+    assert window.errors and window.project.candidates[0].end_ms == 2500 and not window.boundary_undo
+    window.errors.clear()
+    window.close_assistant_dialog()
+
+
+def test_blur_mode_gui_export_and_project_save(app, window, media, tmp_path, monkeypatch):
+    window.media_loaded(media)
+    window.minimum.setValue(1); window.add_manual()
+    assert window.export_layout.currentIndex() == 0 and window.top.isEnabled()
+    window.export_layout.setCurrentIndex(1)
+    assert not window.top.isEnabled() and not window.video_y.isEnabled()
+    window.resolution.setCurrentText("720")
+    window.export_folder.setText(str(tmp_path / "blurred"))
+    window.export_selected(); wait_task(app, window)
+    assert list((tmp_path / "blurred").glob("*.mp4")) and window.project.export.layout == "blur_center"
+    target = tmp_path / "blur-project.json"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_: (str(target), ""))
+    window.save(); wait_task(app, window)
+    window.load_project_path(target); wait_task(app, window)
+    assert window.export_layout.currentIndex() == 1 and window.project.export.layout == "blur_center"
+
+
+def test_refinement_background_task_uses_transcript_and_requires_apply(app, window, media, monkeypatch):
+    import copy
+    from clipnado.models import Candidate
+    from clipnado.local_llm import LocalAnalysisResult
+    window.media_loaded(media)
+    window.minimum.setValue(2); window.maximum.setValue(8); window.add_manual()
+    window.table.selectRow(0)
+    original = copy.deepcopy(window.project.candidates[0])
+    window.project.segments = [Segment(0, 8000, "Уже исправленный текст")]
+    calls = []
+    monkeypatch.setattr("clipnado.app.prepare_backend", lambda tools, *_: (tools, []))
+    def recognize(media, tools, cache, token, progress, existing, **_):
+        calls.append(copy.deepcopy(existing))
+        return existing, [], []
+    monkeypatch.setattr("clipnado.app.recognize", recognize)
+    alternative = Candidate(media.source_file_id, 1000, 4000, 80, "Юмор", "Более полный ответ")
+    monkeypatch.setattr("clipnado.app.LocalClipAssistant.refine", lambda *_: LocalAnalysisResult([alternative], [], {"complete": True}))
+    QTest.mouseClick(window.refine_button, Qt.LeftButton)
+    wait_task(app, window)
+    assert calls == [window.project.segments] and window.project.candidates == [original]
+    assert window.assistant_dialog and window.assistant_dialog.current() == alternative
+    window.assistant_dialog.reject()
+    app.processEvents()
+    assert window.project.candidates == [original]
+
+
+def test_reopening_query_results_after_transcript_edit_rejects_addition(app, window, media):
+    from clipnado.models import Candidate, Project, SearchSettings
+    result = Project(media, segments=[Segment(0, 8000, "Старый текст")],
+                     candidates=[Candidate(media.source_file_id, 0, 6000, 80, "Юмор", "Совпадение", match_score=90)],
+                     search=SearchSettings(query="смешной ответ"))
+    window.media_loaded(media)
+    window.query_search_ready(result)
+    window.close_assistant_dialog()
+    window.project.segments[0].text = "Новый текст"
+    window.show_query_results()
+    window.assistant_dialog.apply_selected()
+    assert window.errors and not window.project.candidates
+    window.errors.clear()
+    window.close_assistant_dialog()

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import os
 import sys
 import tempfile
 import time
+from uuid import uuid4
 from pathlib import Path
 
 # Use software decoding for the pixel preview; it avoids black native D3D surfaces
@@ -35,6 +38,8 @@ from .settings import data_root, read_settings, restore_tools, write_settings
 from .subtitles import from_srt
 from .workers import Worker
 from .local_llm import LocalModelProvider, prepare_backend
+from .assist import LocalClipAssistant
+from .suggestions import ClipSuggestionsDialog
 
 STYLE = """
 QWidget { background: #111820; color: #e7edf3; font-family: 'Segoe UI', 'DejaVu Sans'; font-size: 13px; }
@@ -148,6 +153,8 @@ class MainWindow(QMainWindow):
         self.cache = Path(settings.get("cache") or str(data_root() / "cache"))
         self.output = Path(settings.get("output") or str(Path.home() / "Videos" / "Clipnado"))
         self.project = None
+        self.assistant_dialog = None
+        self.boundary_undo = []
         self.project_path = None
         self.dirty = False
         self.task_thread = None
@@ -232,6 +239,15 @@ class MainWindow(QMainWindow):
         form.addRow(button("Указать модель Qwen (.gguf)", self.choose_semantic_model))
         self.analyze_button = button("Найти эпизоды", self.analyze, True)
         form.addRow(self.analyze_button)
+        self.content_query = QLineEdit()
+        self.content_query.setMaxLength(500)
+        self.content_query.setPlaceholderText("Например: где спорят с учителем")
+        form.addRow("Найти по смыслу", self.content_query)
+        self.content_button = button("Найти по содержанию", self.find_by_content)
+        form.addRow(self.content_button)
+        self.query_results_button = button("Результаты последнего запроса", self.show_query_results)
+        form.addRow(self.query_results_button)
+        form.addRow(note("Поиск по содержанию проверяет всю расшифровку. Совпадения показываются отдельно и добавляются в эпизоды по вашему выбору."))
         sidebar_layout.addWidget(search)
         self.tools_button = button("Проверить FFmpeg / Whisper", self.check_tools)
         sidebar_layout.addWidget(self.tools_button)
@@ -282,7 +298,16 @@ class MainWindow(QMainWindow):
         controls.addWidget(button("Отметить все", lambda: self.select_all(True)))
         controls.addWidget(button("Снять отметки", lambda: self.select_all(False)))
         self.candidate_actions = QWidget()
-        self.candidate_actions.setLayout(controls)
+        actions_layout = QVBoxLayout(self.candidate_actions)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.addLayout(controls)
+        refinement = QHBoxLayout()
+        self.refine_button = button("Подобрать границы", self.refine_selected)
+        refinement.addWidget(self.refine_button)
+        self.undo_boundaries_button = button("Отменить границы", self.undo_boundaries)
+        refinement.addWidget(self.undo_boundaries_button)
+        refinement.addStretch()
+        actions_layout.addLayout(refinement)
         layout.addWidget(self.candidate_actions)
         inner = QSplitter(Qt.Vertical)
         self.table = QTableWidget(0, 6)
@@ -357,6 +382,7 @@ class MainWindow(QMainWindow):
         group = QGroupBox("03   Подготовка клипов для CapCut")
         self.export_group = group
         form = QFormLayout(group)
+        self.export_layout = combo(["Видео сверху · тёмная зона", "Видео по центру · размытый фон"])
         self.aspect = combo(["9:16", "16:9", "1:1"])
         self.resolution = combo(["720", "1080"], "1080")
         self.fps = combo(["24", "25", "30", "50", "60"], "30")
@@ -365,7 +391,7 @@ class MainWindow(QMainWindow):
         self.video_y = spin(0, 80, 0)
         self.subtitle_y = spin(0, 99, 31)
         self.subtitle_mode = combo(["Выключены", "Отдельный SRT", "Встроить в видео"])
-        for label, widget in [("Холст", self.aspect), ("Размер, p", self.resolution), ("FPS", self.fps), ("Качество H.264", self.quality),
+        for label, widget in [("Оформление", self.export_layout), ("Холст", self.aspect), ("Размер, p", self.resolution), ("FPS", self.fps), ("Качество H.264", self.quality),
                               ("Высота зоны видео, %", self.top), ("Отступ зоны сверху, %", self.video_y),
                               ("Субтитры", self.subtitle_mode), ("Позиция текста от верха, %", self.subtitle_y)]:
             form.addRow(label, widget)
@@ -377,10 +403,12 @@ class MainWindow(QMainWindow):
         folder_layout.addWidget(button("Выбрать…", self.choose_output))
         form.addRow("Папка результата", folder_row)
         layout.addWidget(group)
-        notice = QLabel("Видео вписывается с сохранением пропорций. Нижняя зона — чистое чёрное поле. MP4 не содержит прозрачности. Исходный звук сохраняется; музыка и эффекты не добавляются.")
-        notice.setWordWrap(True)
-        notice.setObjectName("notice")
-        layout.addWidget(notice)
+        self.export_notice = QLabel()
+        self.export_notice.setWordWrap(True)
+        self.export_notice.setObjectName("notice")
+        layout.addWidget(self.export_notice)
+        self.export_layout.currentIndexChanged.connect(self.export_layout_changed)
+        self.export_layout_changed()
         row = QHBoxLayout()
         self.export_button = button("Экспортировать отмеченные", self.export_selected, True)
         row.addWidget(self.export_button)
@@ -391,6 +419,15 @@ class MainWindow(QMainWindow):
         self.queue.setPlaceholderText("Здесь появятся очередь и пути готовых файлов. Каждый MP4 проверяется после кодирования.")
         layout.addWidget(self.queue, 1)
         self.tabs.addTab(tab, "03  Экспорт")
+
+    def export_layout_changed(self, *_):
+        blurred = self.export_layout.currentIndex() == 1
+        self.top.setEnabled(not blurred)
+        self.video_y.setEnabled(not blurred)
+        self.export_notice.setText(
+            "Основное видео целиком вписано по центру. Фон заполняет холст увеличенной размытой копией того же видео, синхронно с основным кадром. Пропорции и исходный звук сохраняются. Позиция субтитров задаётся от верха всего холста."
+            if blurred else
+            "Видео вписывается с сохранением пропорций. Нижняя зона — чистое чёрное поле для анимаций. MP4 не содержит прозрачности. Исходный звук сохраняется.")
 
     def connect_player(self):
         self.player = QMediaPlayer(self)
@@ -539,6 +576,8 @@ class MainWindow(QMainWindow):
 
     def media_loaded(self, media):
         self.project = Project(media)
+        self.boundary_undo.clear()
+        self.close_assistant_dialog()
         self.project_path = None
         self.visible_count = 15
         self.load_ui()
@@ -556,8 +595,12 @@ class MainWindow(QMainWindow):
         self.minimum.setValue(p.search.min_seconds)
         self.maximum.setValue(p.search.max_seconds)
         self.sensitivity.setValue(p.search.sensitivity)
+        self.content_query.setText(p.last_query)
+        self.close_assistant_dialog()
+        self.boundary_undo.clear()
         for c in self.categories:
             c.setChecked(c.text() in p.search.categories)
+        self.export_layout.setCurrentIndex(1 if p.export.layout == "blur_center" else 0)
         self.aspect.setCurrentText(p.export.aspect)
         self.resolution.setCurrentText(str(p.export.resolution))
         self.fps.setCurrentText(str(p.export.fps))
@@ -588,15 +631,19 @@ class MainWindow(QMainWindow):
     def export_settings(self):
         result = ExportSettings(self.aspect.currentText(), int(self.resolution.currentText()), int(self.fps.currentText()),
                                 [18, 20, 25][self.quality.currentIndex()], self.top.value() / 100, self.video_y.value() / 100,
-                                ["off", "srt", "burn"][self.subtitle_mode.currentIndex()], self.subtitle_y.value() / 100)
+                                ["off", "srt", "burn"][self.subtitle_mode.currentIndex()], self.subtitle_y.value() / 100,
+                                "blur_center" if self.export_layout.currentIndex() else "top_black")
         result.validate()
         return result
 
-    def analyze(self):
+    def analyze(self, query=None):
         if not self.project or self.task_thread is not None:
             return
         try:
             settings = self.search_settings()
+            settings.query = query if isinstance(query, str) else ""
+            settings.validate()
+            self.close_assistant_dialog()
             self.persist_settings()
             project = copy.deepcopy(self.project)
             cpu_tools, cache = copy.copy(self.tools), self.cache
@@ -622,7 +669,7 @@ class MainWindow(QMainWindow):
                 project.analysis_info = {**result.info, "speech_seconds": round(speech_seconds, 2),
                     "selection_seconds": round(time.monotonic() - stage, 2), "total_seconds": round(time.monotonic() - started, 2),
                     "speech_backend": "Vulkan" if tools.gpu else "CPU", "network_used": False}
-                shortfall = (shortfall_message(project.media, settings, candidates, bool(segments)) if result.info.get("complete", True)
+                shortfall = (("" if settings.query else shortfall_message(project.media, settings, candidates, bool(segments))) if result.info.get("complete", True)
                     else f"Проверено {result.info.get('checked_windows', 0)} из {result.info.get('total_windows', 0)} участков. Количество найденных клипов промежуточное; повторный поиск продолжит пропущенные участки.")
                 if shortfall:
                     warnings.append(shortfall)
@@ -631,12 +678,183 @@ class MainWindow(QMainWindow):
                 project.validate()
                 return project
             self.analyze_button.setText("Поиск выполняется…")
-            self.start_task(execute, self.analysis_ready)
+            self.start_task(execute, self.query_search_ready if settings.query else self.analysis_ready)
         except (ValueError, RuntimeError) as exc:
             self.show_error(exc)
 
+    def close_assistant_dialog(self):
+        if self.assistant_dialog is not None:
+            self.assistant_dialog.close()
+            self.assistant_dialog = None
+
+    def open_suggestions(self, candidates, heading, mode, apply):
+        self.close_assistant_dialog()
+        dialog = ClipSuggestionsDialog(self, candidates, heading, mode, self.preview_suggestion, self.player.pause, apply)
+        self.assistant_dialog = dialog
+        def released(*_):
+            if self.assistant_dialog is dialog:
+                self.assistant_dialog = None
+        dialog.destroyed.connect(released)
+        dialog.show()
+
+    def preview_suggestion(self, candidate):
+        if not self.project or candidate.source_file_id != self.project.media.source_file_id:
+            return
+        self.player.pause()
+        self.preview_end = candidate.end_ms
+        self.player.setPosition(candidate.start_ms)
+        self.still_timer.stop()
+        for _, token in self.poster_jobs:
+            token.cancel()
+        self.player.play()
+
+    def find_by_content(self):
+        query = self.content_query.text().strip()
+        if not query:
+            self.show_error("Введите, какие моменты найти: например, «где спорят с учителем».")
+            return
+        self.analyze(query)
+
+    def query_search_ready(self, result):
+        if not self.project or self.project.media.source_file_id != result.media.source_file_id:
+            return
+        self.project.segments, self.project.audio_energy = result.segments, result.audio_energy
+        self.project.query_results = result.candidates
+        self.project.last_query = result.search.query
+        self.project.query_info = {**result.analysis_info, "warnings": result.warnings,
+                                   "transcript_digest": self.transcript_digest(result.segments)}
+        self.refresh_transcript()
+        self.changed()
+        self.progress.setValue(100)
+        state = "Поиск по содержанию завершён" if result.analysis_info.get("complete", True) else "Поиск по содержанию завершён частично"
+        self.status.setText(f"{state}: {len(result.candidates)} совпадений. Основные эпизоды сохранены.")
+        self.show_query_results()
+
+    def show_query_results(self):
+        if not self.project or not self.project.last_query:
+            self.show_error("Сначала выполните поиск по содержанию.")
+            return
+        source_id = self.project.media.source_file_id
+        expected_segments = copy.deepcopy(self.project.segments)
+        searched_digest = self.project.query_info.get("transcript_digest")
+        stale = searched_digest is not None and searched_digest != self.transcript_digest(expected_segments)
+        query = self.project.last_query
+        warnings = self.project.query_info.get("warnings", [])
+        heading = f"Запрос: «{query}». Найдено {len(self.project.query_results)} совпадений. Основные эпизоды не заменяются."
+        if warnings:
+            heading += "\n" + "\n".join(warnings[:3])
+        if stale:
+            heading += "\nРасшифровка изменена. Для добавления совпадений повторите поиск."
+        if not self.project.query_results:
+            heading += "\nСовпадений с заданной оценкой интересности и соответствием запросу от 70/100 нет."
+        def add(candidates):
+            if (stale or not self.project or self.project.media.source_file_id != source_id or self.project.segments != expected_segments
+                or self.project.last_query != query):
+                self.show_error("Видео, расшифровка или запрос изменены. Повторите поиск по содержанию.")
+                return False
+            known = {(c.start_ms, c.end_ms) for c in self.project.candidates}
+            added = 0
+            for candidate in candidates:
+                if (candidate.start_ms, candidate.end_ms) not in known:
+                    c = copy.deepcopy(candidate)
+                    c.id, c.selected = uuid4().hex, True
+                    self.project.candidates.append(c)
+                    known.add((c.start_ms, c.end_ms))
+                    added += 1
+            self.visible_count = max(self.visible_count, len(self.project.candidates))
+            self.refresh_candidates()
+            self.changed()
+            self.status.setText(f"Добавлено эпизодов из поиска по содержанию: {added}.")
+            return True
+        self.open_suggestions(copy.deepcopy(self.project.query_results), heading, "query", add)
+
+    @staticmethod
+    def transcript_digest(segments):
+        text = json.dumps([(s.start_ms, s.end_ms, s.text) for s in segments], ensure_ascii=False)
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def refine_selected(self):
+        anchor = self.current_candidate()
+        if not self.project or self.task_thread is not None:
+            return
+        if anchor is None:
+            self.show_error("Выберите клип в таблице эпизодов.")
+            return
+        try:
+            settings = self.search_settings()
+            project, original = copy.deepcopy(self.project), copy.deepcopy(anchor)
+            cpu_tools, cache = copy.copy(self.tools), self.cache
+            self.close_assistant_dialog()
+            def execute(token, progress):
+                tools, warnings = prepare_backend(cpu_tools, token, progress)
+                try:
+                    segments, energy, asr_warnings = recognize(project.media, tools, cache, token, progress, project.segments, existing_energy=project.audio_energy)
+                except RuntimeError:
+                    if not tools.gpu:
+                        raise
+                    tools.whisper, tools.gpu = cpu_tools.whisper, False
+                    segments, energy, asr_warnings = recognize(project.media, tools, cache, token, progress, project.segments, existing_energy=project.audio_energy)
+                    warnings.append("Whisper обработан на CPU после ошибки Vulkan.")
+                result = LocalClipAssistant(tools, cpu_tools).refine(project.media, segments, original, settings, cache, token, progress)
+                result.warnings = [*warnings, *asr_warnings, *result.warnings]
+                return result, segments, energy
+            self.start_task(execute, lambda value: self.boundaries_ready(original, project.media.source_file_id, *value))
+        except (ValueError, RuntimeError) as exc:
+            self.show_error(exc)
+
+    def boundaries_ready(self, anchor, source_id, result, segments, energy):
+        if not self.project or self.project.media.source_file_id != source_id:
+            return
+        self.project.segments, self.project.audio_energy = segments, energy
+        self.refresh_transcript()
+        self.changed()
+        expected_segments = copy.deepcopy(segments)
+        heading = f"Текущий клип: {timecode(anchor.start_ms)}–{timecode(anchor.end_ms)}. Сдвиг каждой границы — не более 30 секунд."
+        if result.info.get("current_recommended"):
+            heading += "\nМодель рекомендует также текущие границы."
+        if not result.candidates:
+            heading += "\nПодходящих альтернатив не предложено. Текущий клип сохранён."
+        if result.warnings:
+            heading += "\n" + "\n".join(result.warnings[:3])
+        def apply(candidates):
+            target = next((c for c in self.project.candidates if c.id == anchor.id), None) if self.project else None
+            if (target is None or self.project.media.source_file_id != source_id or self.project.segments != expected_segments
+                or (target.start_ms, target.end_ms) != (anchor.start_ms, anchor.end_ms)):
+                self.show_error("Клип или расшифровка изменены. Подберите границы заново.")
+                return False
+            self.boundary_undo.append(copy.deepcopy(target))
+            chosen = candidates[0]
+            for name in ("start_ms", "end_ms", "score", "reason", "category", "transcript_excerpt", "provider", "version", "match_score"):
+                setattr(target, name, getattr(chosen, name))
+            target.validate(self.project.media)
+            self.refresh_candidates()
+            self.changed()
+            self.status.setText("Новые границы применены. Кнопка «Отменить границы» вернёт прежний вариант.")
+            return True
+        self.progress.setValue(100)
+        self.status.setText(f"Подбор границ завершён: {len(result.candidates)} альтернатив. Текущий клип сохранён до применения.")
+        self.open_suggestions(result.candidates, heading, "bounds", apply)
+
+    def undo_boundaries(self):
+        if not self.project or not self.boundary_undo:
+            self.show_error("Нет применённых изменений границ для отмены в этом сеансе.")
+            return
+        previous = self.boundary_undo.pop()
+        target = next((c for c in self.project.candidates if c.id == previous.id), None)
+        if target is None:
+            self.show_error("Исходный клип больше не находится в проекте.")
+            return
+        selected = target.selected
+        for name, value in vars(previous).items():
+            setattr(target, name, copy.deepcopy(value))
+        target.selected = selected
+        self.refresh_candidates()
+        self.changed()
+        self.status.setText("Прежние границы клипа восстановлены.")
+
     def analysis_ready(self, project):
         self.project = project
+        self.boundary_undo.clear()
         self.visible_count = project.search.count
         self.refresh_candidates()
         self.refresh_transcript()
@@ -701,6 +919,8 @@ class MainWindow(QMainWindow):
             self.results_label.setText(f"Показано {len(visible)} из {len(candidates)} · отмечено {selected}")
             self.more_button.setEnabled(len(visible) < len(candidates))
         self.repopulating = False
+        self.refine_button.setEnabled(self.current_candidate() is not None)
+        self.undo_boundaries_button.setEnabled(bool(self.boundary_undo))
 
     def candidate_changed(self, item):
         if self.repopulating or not self.project:
@@ -722,6 +942,7 @@ class MainWindow(QMainWindow):
 
     def candidate_selected(self):
         c = self.current_candidate()
+        self.refine_button.setEnabled(c is not None)
         if c:
             self.reason.setText(c.reason + "\n" + c.transcript_excerpt[:500])
             self.player.pause()

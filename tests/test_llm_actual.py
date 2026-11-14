@@ -111,3 +111,46 @@ def test_actual_qwen_context_budget_without_generation(tmp_path, monkeypatch):
     assert accepted and retry_checked and result.info["adaptive_splits"] > 0 and result.info["complete"]
     assert covered == set(range(len(segments))), "Adaptive splitting lost transcript rows"
     assert result.info["context_tokens"] == 8192
+
+
+@pytest.mark.skipif(not os.environ.get("CLIPNADO_TEST_LLAMA") or not os.environ.get("CLIPNADO_TEST_QWEN"),
+                    reason="Set actual local llama-cli and Qwen GGUF paths")
+def test_actual_qwen_content_query_and_cache(tmp_path, monkeypatch):
+    """Paraphrased query on the authored dialogue; no video-wide accuracy claim."""
+    data = json.loads((Path(__file__).resolve().parent.parent / "qa/qwen-dialogue-fixture.json").read_text(encoding="utf-8"))
+    segments = [Segment(**s) for s in data["segments"]]
+    media = MediaInfo("authored-dialogue.mp4", "actual-query-test", data["duration_ms"], 1920, 1080, 30, True)
+    tools = Tools(llama=os.environ["CLIPNADO_TEST_LLAMA"], semantic_model=os.environ["CLIPNADO_TEST_QWEN"], threads=2, acceleration="cpu")
+    settings = SearchSettings(query="Ученик предлагает необычную замену себе на экзамене")
+    provider = LocalModelProvider(tools)
+    result = provider.analyze(media, segments, settings, tmp_path / "Кэш запроса", Cancellation(), lambda *_: None)
+    assert result.info["complete"] and result.candidates
+    assert all(c.match_score >= 70 and c.score >= 60 and 60000 <= c.end_ms-c.start_ms <= 90000 for c in result.candidates)
+    assert any(c.start_ms <= 20000 and c.end_ms >= 80000 for c in result.candidates)
+    monkeypatch.setattr("clipnado.local_llm.run", lambda *_a, **_k: pytest.fail("Query cache repeated actual inference"))
+    again = provider.analyze(media, segments, settings, tmp_path / "Кэш запроса", Cancellation(), lambda *_: None)
+    assert result.candidates == again.candidates
+
+
+@pytest.mark.skipif(not os.environ.get("CLIPNADO_TEST_LLAMA") or not os.environ.get("CLIPNADO_TEST_QWEN"),
+                    reason="Set actual local llama-cli and Qwen GGUF paths")
+def test_actual_qwen_neighbor_review_and_cache(tmp_path, monkeypatch):
+    import copy
+    from clipnado.assist import LocalClipAssistant, neighboring_proposals
+    from clipnado.models import Candidate
+    data = json.loads((Path(__file__).resolve().parent.parent / "qa/qwen-dialogue-fixture.json").read_text(encoding="utf-8"))
+    segments = [Segment(**s) for s in data["segments"]]
+    media = MediaInfo("authored-dialogue.mp4", "actual-neighbors-test", data["duration_ms"], 1920, 1080, 30, True)
+    tools = Tools(llama=os.environ["CLIPNADO_TEST_LLAMA"], semantic_model=os.environ["CLIPNADO_TEST_QWEN"], threads=2, acceleration="cpu")
+    anchor = Candidate(media.source_file_id, 0, 65000, 80, "Юмор", "До последнего ответа", selected=True)
+    before = copy.deepcopy(anchor)
+    assistant = LocalClipAssistant(tools)
+    settings = SearchSettings()
+    result = assistant.refine(media, segments, anchor, settings, tmp_path / "Кэш границ", Cancellation(), lambda *_: None)
+    assert result.info["complete"] and (result.candidates or result.info["current_recommended"])
+    assert anchor == before
+    allowed = {(p.start_ms, p.end_ms) for p in neighboring_proposals(media, segments, anchor, settings, 0, len(segments))}
+    assert all((c.start_ms,c.end_ms) in allowed and c.score >= 60 for c in result.candidates)
+    monkeypatch.setattr("clipnado.local_llm.run", lambda *_a, **_k: pytest.fail("Boundary cache repeated actual inference"))
+    again = assistant.refine(media, segments, anchor, settings, tmp_path / "Кэш границ", Cancellation(), lambda *_: None)
+    assert again.info["cached"] and result.candidates == again.candidates and anchor == before
