@@ -20,13 +20,10 @@ def digest(path):
     return h.hexdigest()
 
 
-def main():
-    portable, output, model = (Path(p).resolve() for p in sys.argv[1:4])
-    root = Path(__file__).resolve().parent.parent
-    test_xml = root / 'qa' / 'test-results-windows.xml'
-    cases = ET.parse(test_xml).findall('.//testcase')
+def validate_test_report(path):
+    cases = ET.parse(path).findall('.//testcase')
     names = {c.attrib['name'] for c in cases}
-    required = {'test_actual_qwen_content_query_and_cache', 'test_actual_qwen_neighbor_review_and_cache', 'test_actual_qwen_context_budget_without_generation', 'test_actual_qwen_semantic_selection_and_cache', 'test_actual_qwen_coarse_segments_and_cache',
+    required = {'test_actual_russian_recognition_and_cache', 'test_actual_qwen_content_query_and_cache', 'test_actual_qwen_neighbor_review_and_cache', 'test_actual_qwen_context_budget_without_generation', 'test_actual_qwen_semantic_selection_and_cache', 'test_actual_qwen_coarse_segments_and_cache',
                 'test_windows_cancel_stops_descendant_process_and_releases_logs',
                 'test_mixed_export_uses_individual_layouts_and_saves_choices',
                 'test_export_choices_follow_clip_identity_across_selection_and_sort',
@@ -35,12 +32,33 @@ def main():
         c.find(tag) is not None for c in cases for tag in ('failure', 'error', 'skipped')
     ):
         raise RuntimeError('Complete Windows regression suite with actual local models did not pass')
+    return cases
+
+
+def main():
+    portable, output, model = (Path(p).resolve() for p in sys.argv[1:4])
+    root = Path(__file__).resolve().parent.parent
+    test_xml = root / 'qa' / 'test-results-windows.xml'
+    cases = validate_test_report(test_xml)
     if digest(model) != MODEL_SHA or model.stat().st_size >= 2**31:
         raise RuntimeError('Separate Qwen release asset is invalid')
     run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+    provenance = root / 'qa' / 'reused-validation.json'
+    origin = None
+    validation_url, validation_note = run_url, ""
+    if provenance.exists():
+        origin = json.loads(provenance.read_text(encoding='utf-8'))
+        if (not origin.get('application_and_tests_identical') or origin['package_commit'] != os.environ['GITHUB_SHA']
+            or origin['report_sha256'] != digest(test_xml) or origin['tests_passed'] != len(cases)):
+            raise RuntimeError('Invalid cached validation provenance')
+        validation_url = origin['validation_url']
+        validation_note = (f"\n- Набор тестов взят из подтверждённого запуска {validation_url} (ревизия {origin['source_commit']}). "
+            "Проверено полное совпадение исходников приложения, тестов, зависимостей и сценариев сборки; изменились только проверка/доставка пакета. "
+            f"В текущем запуске {run_url} переносимый пакет собран и проверен повторно, включая настоящий экспорт трёх оформлений и предпросмотр.\n")
     report = f'''# Проверка Clipnado Studio Lite 0.1.8
 
-Windows Server 2022 x64 / GitHub Actions: {run_url}
+Windows Server 2022 x64 / GitHub Actions: {validation_url}
+{validation_note}
 
 - Пройдено тестов: {len(cases)}, без пропусков и ошибок. Проверены GUI, настоящий FFmpeg, экспорт H.264/AAC и субтитров, отмена дочерних процессов, кэш и сохранение проекта.
 - Новое в 0.1.8: реальный экспорт TikTok 9:16 для горизонтального, вертикального, квадратного и анаморфного исходника. Проверены заполнение холста без полей, центральное кадрирование, сохранение пропорций, звук, синхронная вспышка и все режимы субтитров. Режим TikTok остаётся вертикальным при других общих настройках холста.
@@ -65,7 +83,8 @@ Windows Server 2022 x64 / GitHub Actions: {run_url}
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     manifest['windows_execution_verified'] = True
     manifest['windows_validation'] = {
-        'os': 'Windows Server 2022 x64', 'tests_passed': len(cases), 'workflow_url': run_url,
+        'os': 'Windows Server 2022 x64', 'tests_passed': len(cases), 'workflow_url': validation_url,
+        'package_workflow_url': run_url, 'validation_provenance': origin,
         'actual_whisper': True, 'actual_qwen_dialogue': True, 'portable_qwen_token': True,
         'portable_gui_export': True, 'compiler': 'MSVC', 'target_hardware_verified': False,
         'physical_vulkan_verified': False, 'actual_content_query': True, 'actual_boundary_review': True,
@@ -115,7 +134,8 @@ Windows Server 2022 x64 / GitHub Actions: {run_url}
 
 Python, FFmpeg, Whisper base и CPU/Vulkan-движки включены. После скачивания интернет не нужен. По умолчанию программа проверяет видеокарту через Vulkan и при необходимости переключается на CPU. Под Xeon E5-2670 исключены AVX2/FMA/F16C/BMI2. CUDA Toolkit устанавливать не нужно. При первом запуске возможна подготовка модели на диске; CPU-анализ может быть долгим.
 
-**Windows Server 2022: пройдено {len(cases)} тестов без пропусков**, включая реальный Whisper и реальную Qwen: обычный отбор, смысловой запрос и подбор границ на составленном диалоге. Готовый пакет дополнительно проверен: настоящее выполнение Qwen, GUI, видео и экспорт. [Результаты]({run_url}).
+**Windows Server 2022: пройдено {len(cases)} тестов без пропусков**, включая реальный Whisper и реальную Qwen: обычный отбор, смысловой запрос и подбор границ на составленном диалоге. Готовый пакет дополнительно проверен: настоящее выполнение Qwen, GUI, видео и экспорт. [Набор тестов]({validation_url}), [проверка готового пакета]({run_url}).
+{validation_note}
 
 Физические GTX 1660 / Xeon и скорость на пользовательском видео не проверены. Модель анализирует текст речи, а не изображение; точность и минимум 10 интересных клипов для любого видео не гарантируются. Подробности в QA_REPORT.md; контрольные суммы — SHA256SUMS.txt.
 '''

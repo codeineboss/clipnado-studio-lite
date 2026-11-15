@@ -24,7 +24,7 @@ def main():
         if diagnostic.returncode or "ERROR" in diagnostic.stdout or "MISSING" in diagnostic.stdout:
             raise RuntimeError("Packaged diagnostics failed: " + diagnostic.stderr)
         code = r'''
-import json, sys, socket
+import json, sys, socket, traceback
 from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -34,6 +34,10 @@ from clipnado.models import Candidate, Segment
 from clipnado.process import run
 import clipnado.local_llm as llm
 app = QApplication([])
+def uncaught(kind, value, tb):
+    traceback.print_exception(kind, value, tb)
+    app.exit(2)
+sys.excepthook = uncaught
 QMessageBox.information = lambda *_: QMessageBox.Ok
 w = MainWindow()
 assert not hasattr(w, 'key') and not hasattr(w, 'provider')
@@ -113,6 +117,8 @@ def check():
         w.close_assistant_dialog()
         print('PACKAGED_BOUNDARY_REVIEW_PROTOCOL_OK', flush=True)
         stage[0] = 5
+        w.select_all(True)
+        assert w.export_clips.rowCount() == 1, 'Check the clip before previewing its export layout'
         w.export_clips.cellWidget(0, 3).setCurrentIndex(2)
         w.preview_export_clip()
     elif stage[0] == 5 and w.task_thread is None:
