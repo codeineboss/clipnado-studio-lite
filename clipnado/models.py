@@ -6,6 +6,13 @@ from typing import Any
 from uuid import uuid4
 
 
+EXPORT_LAYOUTS = {
+    "top_black": "Видео сверху · тёмная зона",
+    "blur_center": "Видео по центру · размытый фон",
+    "tt_fill": "TikTok · на весь кадр 9:16",
+}
+
+
 def integer(value: Any, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or int(value) != value:
         raise ValueError(f"Некорректное число: {name}")
@@ -78,11 +85,14 @@ class Candidate:
     id: str = field(default_factory=lambda: uuid4().hex)
     selected: bool = False
     match_score: int | None = None
+    export_layout: str | None = None
 
     def validate(self, media: MediaInfo) -> None:
         self.start_ms = integer(self.start_ms, "начало клипа")
         self.end_ms = integer(self.end_ms, "конец клипа")
         self.score = integer(self.score, "рейтинг")
+        if self.export_layout is not None and (not isinstance(self.export_layout, str) or self.export_layout not in EXPORT_LAYOUTS):
+            raise ValueError("Неизвестное оформление клипа")
         if self.source_file_id != media.source_file_id or not 0 <= self.start_ms < self.end_ms <= media.duration_ms:
             raise ValueError("Клип выходит за границы видео или относится к другому исходнику")
         if self.match_score is not None:
@@ -141,7 +151,7 @@ class ExportSettings:
             raise ValueError("Неверный формат экспорта")
         if self.fps not in (24, 25, 30, 50, 60) or not 16 <= self.quality <= 28:
             raise ValueError("Неверная частота кадров или качество")
-        if self.layout not in ("top_black", "blur_center"):
+        if not isinstance(self.layout, str) or self.layout not in EXPORT_LAYOUTS:
             raise ValueError("Неизвестное оформление видео")
         if self.layout == "top_black" and (not 0.2 <= self.top_fraction <= 1 or not 0 <= self.video_y <= 1 - self.top_fraction + 1e-9):
             raise ValueError("Верхняя зона выходит за холст")
@@ -153,7 +163,7 @@ class ExportSettings:
     def dimensions(self) -> tuple[int, int]:
         return {"9:16": (self.resolution, self.resolution * 16 // 9),
                 "16:9": (self.resolution * 16 // 9, self.resolution),
-                "1:1": (self.resolution, self.resolution)}[self.aspect]
+                "1:1": (self.resolution, self.resolution)}["9:16" if self.layout == "tt_fill" else self.aspect]
 
 
 @dataclass

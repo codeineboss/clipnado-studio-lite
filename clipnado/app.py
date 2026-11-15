@@ -27,9 +27,9 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .analysis import recognize
-from .export import export_clip
+from .export import clip_export_settings, composition_frame, export_clip
 from .media import Tools, probe, thumbnail
-from .models import Candidate, ExportSettings, Project, SearchSettings, Segment, parse_time, timecode
+from .models import EXPORT_LAYOUTS, Candidate, ExportSettings, Project, SearchSettings, Segment, parse_time, timecode
 from .process import Cancellation, Cancelled, run
 from .preview import VideoPreview
 from .projects import load_project, save_project
@@ -154,6 +154,7 @@ class MainWindow(QMainWindow):
         self.output = Path(settings.get("output") or str(Path.home() / "Videos" / "Clipnado"))
         self.project = None
         self.assistant_dialog = None
+        self.export_preview_dialog = None
         self.boundary_undo = []
         self.project_path = None
         self.dirty = False
@@ -278,7 +279,8 @@ class MainWindow(QMainWindow):
         root.addLayout(bottom)
         self.mutating = [self.open_button, self.save_button, self.settings_button, self.import_button, self.relink_button,
                          self.analyze_button, self.tools_button, sidebar, self.candidate_actions, self.table,
-                         self.transcript_controls, self.transcript, self.export_group, self.export_button, self.more_button]
+                         self.transcript_controls, self.transcript, self.export_group, self.export_button, self.more_button,
+                         self.export_clips, self.export_clip_controls]
         for shortcut, callback in (("Ctrl+O", self.open_project), ("Ctrl+S", self.save)):
             action = QAction(self)
             action.setShortcut(shortcut)
@@ -378,11 +380,17 @@ class MainWindow(QMainWindow):
 
     def create_export_tab(self):
         tab = QWidget()
-        layout = QVBoxLayout(tab)
-        group = QGroupBox("03   Подготовка клипов для CapCut")
+        tab_layout = QVBoxLayout(tab)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        scroll.setWidget(content)
+        tab_layout.addWidget(scroll, 1)
+        group = QGroupBox("03   Настройки экспорта")
         self.export_group = group
         form = QFormLayout(group)
-        self.export_layout = combo(["Видео сверху · тёмная зона", "Видео по центру · размытый фон"])
+        self.export_layout = combo(list(EXPORT_LAYOUTS.values()))
         self.aspect = combo(["9:16", "16:9", "1:1"])
         self.resolution = combo(["720", "1080"], "1080")
         self.fps = combo(["24", "25", "30", "50", "60"], "30")
@@ -391,7 +399,7 @@ class MainWindow(QMainWindow):
         self.video_y = spin(0, 80, 0)
         self.subtitle_y = spin(0, 99, 31)
         self.subtitle_mode = combo(["Выключены", "Отдельный SRT", "Встроить в видео"])
-        for label, widget in [("Оформление", self.export_layout), ("Холст", self.aspect), ("Размер, p", self.resolution), ("FPS", self.fps), ("Качество H.264", self.quality),
+        for label, widget in [("Общее оформление", self.export_layout), ("Холст для первых двух вариантов", self.aspect), ("Размер, p", self.resolution), ("FPS", self.fps), ("Качество H.264", self.quality),
                               ("Высота зоны видео, %", self.top), ("Отступ зоны сверху, %", self.video_y),
                               ("Субтитры", self.subtitle_mode), ("Позиция текста от верха, %", self.subtitle_y)]:
             form.addRow(label, widget)
@@ -407,27 +415,150 @@ class MainWindow(QMainWindow):
         self.export_notice.setWordWrap(True)
         self.export_notice.setObjectName("notice")
         layout.addWidget(self.export_notice)
+        self.export_clip_controls = QWidget()
+        clip_controls = QHBoxLayout(self.export_clip_controls)
+        clip_controls.setContentsMargins(0, 0, 0, 0)
+        self.export_clips_label = QLabel("Отметьте эпизоды во вкладке «Эпизоды»")
+        self.export_clips_label.setWordWrap(True)
+        clip_controls.addWidget(self.export_clips_label, 1)
+        clip_controls.addWidget(button("Применить общее ко всем", self.apply_layout_to_selected))
+        clip_controls.addWidget(button("Предпросмотр кадра", self.preview_export_clip))
+        layout.addWidget(self.export_clip_controls)
+        self.export_clips = QTableWidget(0, 4)
+        self.export_clips.setHorizontalHeaderLabels(["Клип · оценка", "Начало", "Конец", "Оформление этого клипа"])
+        self.export_clips.verticalHeader().hide()
+        self.export_clips.setColumnWidth(0, 115)
+        self.export_clips.setColumnWidth(1, 115)
+        self.export_clips.setColumnWidth(2, 115)
+        self.export_clips.setSelectionBehavior(QTableWidget.SelectRows)
+        self.export_clips.setSelectionMode(QTableWidget.SingleSelection)
+        self.export_clips.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.export_clips.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.export_clips.setMinimumHeight(130)
+        layout.insertWidget(0, self.export_clip_controls)
+        layout.insertWidget(1, note("TikTok заполняет кадр 9:16 с обрезкой краёв по центру. «Предпросмотр кадра» покажет кадрирование выбранной строки."))
+        layout.insertWidget(2, self.export_clips, 2)
         self.export_layout.currentIndexChanged.connect(self.export_layout_changed)
         self.export_layout_changed()
+        for widget in (self.aspect, self.resolution, self.fps, self.quality, self.subtitle_mode):
+            widget.currentIndexChanged.connect(self.close_export_preview)
+        for widget in (self.top, self.video_y, self.subtitle_y):
+            widget.valueChanged.connect(self.close_export_preview)
         row = QHBoxLayout()
         self.export_button = button("Экспортировать отмеченные", self.export_selected, True)
         row.addWidget(self.export_button)
         row.addWidget(button("Открыть папку", self.open_output))
-        layout.addLayout(row)
+        tab_layout.addLayout(row)
         self.queue = QTextEdit()
         self.queue.setReadOnly(True)
         self.queue.setPlaceholderText("Здесь появятся очередь и пути готовых файлов. Каждый MP4 проверяется после кодирования.")
-        layout.addWidget(self.queue, 1)
+        self.queue.setMaximumHeight(110)
+        tab_layout.addWidget(self.queue)
         self.tabs.addTab(tab, "03  Экспорт")
 
     def export_layout_changed(self, *_):
-        blurred = self.export_layout.currentIndex() == 1
-        self.top.setEnabled(not blurred)
-        self.video_y.setEnabled(not blurred)
-        self.export_notice.setText(
-            "Основное видео целиком вписано по центру. Фон заполняет холст увеличенной размытой копией того же видео, синхронно с основным кадром. Пропорции и исходный звук сохраняются. Позиция субтитров задаётся от верха всего холста."
-            if blurred else
-            "Видео вписывается с сохранением пропорций. Нижняя зона — чистое чёрное поле для анимаций. MP4 не содержит прозрачности. Исходный звук сохраняется.")
+        # A mixed queue may contain the upper-zone layout even when the common
+        # default is another layout; keep its controls available in that case.
+        code = list(EXPORT_LAYOUTS)[self.export_layout.currentIndex()]
+        upper = code == "top_black" or bool(self.project and any(
+            c.selected and c.export_layout == "top_black" for c in self.project.candidates))
+        self.top.setEnabled(upper)
+        self.video_y.setEnabled(upper)
+        notices = {
+            "top_black": "Видео целиком вписано сверху, нижняя тёмная зона остаётся для анимаций.",
+            "blur_center": "Видео целиком по центру, фон — его синхронная увеличенная размытая копия.",
+            "tt_fill": "TikTok: вертикальный кадр 9:16 без полей и фона. Видео заполняет кадр без растяжения; лишние края обрезаются по центру. Проверьте кадрирование в предпросмотре.",
+        }
+        self.export_notice.setText("Общее оформление: " + notices[code] + " В таблице можно выбрать свой вариант для каждого клипа. TikTok заполняет 9:16 с обрезкой краёв по центру — проверьте важные детали в предпросмотре. Разрешение, FPS, качество и субтитры — общие. Исходный звук сохраняется.")
+        self.refresh_export_clips()
+
+    def refresh_export_clips(self):
+        self.close_export_preview()
+        current = self.current_export_clip()
+        identity = current.id if current else None
+        self.export_clips.setRowCount(0)
+        clips = sorted((c for c in self.project.candidates if c.selected), key=lambda c: c.start_ms) if self.project else []
+        self.export_clips.setRowCount(len(clips))
+        for row, c in enumerate(clips):
+            for col, text in enumerate((f"{row + 1} · {c.score}/100", timecode(c.start_ms), timecode(c.end_ms))):
+                item = QTableWidgetItem(text)
+                item.setData(Qt.UserRole, c.id)
+                item.setToolTip(c.reason + "\n" + c.transcript_excerpt)
+                self.export_clips.setItem(row, col, item)
+            control = combo(list(EXPORT_LAYOUTS.values()))
+            control.setCurrentIndex(list(EXPORT_LAYOUTS).index(c.export_layout) if c.export_layout else self.export_layout.currentIndex())
+            control.setToolTip("Индивидуальное оформление" if c.export_layout else "Используется общее оформление")
+            control.currentIndexChanged.connect(lambda index, clip_id=c.id: self.clip_layout_changed(clip_id, index))
+            self.export_clips.setCellWidget(row, 3, control)
+        if clips:
+            self.export_clips.selectRow(next((i for i, c in enumerate(clips) if c.id == identity), 0))
+        self.export_clips_label.setText(f"Отмеченных клипов: {len(clips)} · выберите оформление в каждой строке")
+
+    def current_export_clip(self):
+        row = self.export_clips.currentRow()
+        item = self.export_clips.item(row, 0) if row >= 0 else None
+        return next((c for c in self.project.candidates if c.id == item.data(Qt.UserRole)), None) if self.project and item else None
+
+    def clip_layout_changed(self, identity, index):
+        if not self.project or self.task_thread is not None:
+            return
+        candidate = next((c for c in self.project.candidates if c.id == identity), None)
+        if candidate:
+            candidate.export_layout = list(EXPORT_LAYOUTS)[index]
+            for row in range(self.export_clips.rowCount()):
+                if self.export_clips.item(row, 0).data(Qt.UserRole) == identity:
+                    self.export_clips.selectRow(row)
+                    break
+            self.export_layout_changed()
+            self.changed()
+
+    def apply_layout_to_selected(self):
+        if not self.project or self.task_thread is not None:
+            return
+        for c in self.project.candidates:
+            if c.selected:
+                c.export_layout = None
+        self.export_layout_changed()
+        self.changed()
+
+    def close_export_preview(self, *_):
+        if self.export_preview_dialog is not None:
+            self.export_preview_dialog.close()
+            self.export_preview_dialog = None
+
+    def preview_export_clip(self):
+        if not self.project or self.task_thread is not None:
+            return
+        candidate = self.current_export_clip()
+        if candidate is None:
+            self.show_error("Отметьте клипы во вкладке «Эпизоды» и выберите строку в таблице экспорта.")
+            return
+        try:
+            settings = clip_export_settings(self.export_settings(), candidate)
+            media, candidate, tools = copy.deepcopy(self.project.media), copy.deepcopy(candidate), copy.copy(self.tools)
+            self.close_export_preview()
+            def completed(data):
+                image = QImage.fromData(data)
+                if image.isNull():
+                    self.show_error("Не удалось прочитать кадр оформления.")
+                    return
+                dialog = QDialog(self)
+                dialog.setAttribute(Qt.WA_DeleteOnClose)
+                dialog.setWindowTitle("Предпросмотр оформления")
+                layout = QVBoxLayout(dialog)
+                heading = note(f"{timecode(candidate.start_ms)}–{timecode(candidate.end_ms)} · {EXPORT_LAYOUTS[settings.layout]}\nКадр оформления выбранного клипа, без субтитров. Это проверка кадрирования; качество MP4 задаётся в настройках экспорта.")
+                layout.addWidget(heading)
+                preview = VideoPreview()
+                preview.set_image(image)
+                layout.addWidget(preview, 1)
+                layout.addWidget(button("Закрыть", dialog.close))
+                dialog.resize(max(400, image.width() + 50), min(image.height() + 160, self.screen().availableGeometry().height() - 60))
+                self.export_preview_dialog = dialog
+                dialog.destroyed.connect(lambda: setattr(self, "export_preview_dialog", None) if self.export_preview_dialog is dialog else None)
+                dialog.show()
+            self.start_task(lambda token, progress: composition_frame(media, candidate, settings, tools, token), completed)
+        except ValueError as exc:
+            self.show_error(exc)
 
     def connect_player(self):
         self.player = QMediaPlayer(self)
@@ -600,7 +731,7 @@ class MainWindow(QMainWindow):
         self.boundary_undo.clear()
         for c in self.categories:
             c.setChecked(c.text() in p.search.categories)
-        self.export_layout.setCurrentIndex(1 if p.export.layout == "blur_center" else 0)
+        self.export_layout.setCurrentIndex(list(EXPORT_LAYOUTS).index(p.export.layout))
         self.aspect.setCurrentText(p.export.aspect)
         self.resolution.setCurrentText(str(p.export.resolution))
         self.fps.setCurrentText(str(p.export.fps))
@@ -632,7 +763,7 @@ class MainWindow(QMainWindow):
         result = ExportSettings(self.aspect.currentText(), int(self.resolution.currentText()), int(self.fps.currentText()),
                                 [18, 20, 25][self.quality.currentIndex()], self.top.value() / 100, self.video_y.value() / 100,
                                 ["off", "srt", "burn"][self.subtitle_mode.currentIndex()], self.subtitle_y.value() / 100,
-                                "blur_center" if self.export_layout.currentIndex() else "top_black")
+                                list(EXPORT_LAYOUTS)[self.export_layout.currentIndex()])
         result.validate()
         return result
 
@@ -844,10 +975,11 @@ class MainWindow(QMainWindow):
         if target is None:
             self.show_error("Исходный клип больше не находится в проекте.")
             return
-        selected = target.selected
+        selected, layout = target.selected, target.export_layout
         for name, value in vars(previous).items():
             setattr(target, name, copy.deepcopy(value))
         target.selected = selected
+        target.export_layout = layout
         self.refresh_candidates()
         self.changed()
         self.status.setText("Прежние границы клипа восстановлены.")
@@ -921,6 +1053,7 @@ class MainWindow(QMainWindow):
         self.repopulating = False
         self.refine_button.setEnabled(self.current_candidate() is not None)
         self.undo_boundaries_button.setEnabled(bool(self.boundary_undo))
+        self.export_layout_changed()
 
     def candidate_changed(self, item):
         if self.repopulating or not self.project:
@@ -935,6 +1068,7 @@ class MainWindow(QMainWindow):
             c.validate(self.project.media)
             self.changed()
             self.results_label.setText(f"Показано {self.table.rowCount()} из {len(self.project.candidates)} · отмечено {sum(c.selected for c in self.project.candidates)}")
+            self.export_layout_changed()
         except ValueError as exc:
             c.start_ms, c.end_ms, c.selected = previous
             self.show_error(exc)
@@ -1078,6 +1212,13 @@ class MainWindow(QMainWindow):
             selected = [copy.deepcopy(c) for c in self.project.candidates if c.selected]
             if not selected:
                 raise ValueError("Сначала отметьте клипы в таблице эпизодов")
+            plan = []
+            for c in selected:
+                try:
+                    effective = clip_export_settings(settings, c)
+                except ValueError as exc:
+                    raise ValueError(f"Клип {timecode(c.start_ms)}–{timecode(c.end_ms)}: {exc}") from exc
+                plan.append((c, effective))
             if not self.export_folder.text().strip():
                 raise ValueError("Выберите папку результата")
             self.output = Path(self.export_folder.text()).resolve()
@@ -1086,13 +1227,14 @@ class MainWindow(QMainWindow):
             self.persist_settings()
             project, tools, output = copy.deepcopy(self.project), copy.copy(self.tools), self.output
             self.queue.clear()
-            for i, c in enumerate(selected, 1):
-                self.queue.append(f"{i}. {timecode(c.start_ms)} → {timecode(c.end_ms)} — в очереди")
+            for i, (c, effective) in enumerate(plan, 1):
+                width, height = effective.dimensions()
+                self.queue.append(f"{i}. {timecode(c.start_ms)} → {timecode(c.end_ms)} · {EXPORT_LAYOUTS[effective.layout]} · {width}×{height} — в очереди")
             def execute(token, progress):
                 results = []
-                for index, c in enumerate(selected):
+                for index, (c, effective) in enumerate(plan):
                     token.check()
-                    path = export_clip(project.media, c, project.segments, settings, output, tools, token,
+                    path = export_clip(project.media, c, project.segments, effective, output, tools, token,
                                        lambda value, text: progress(int((index + value / 100) / len(selected) * 100), f"{index + 1}/{len(selected)} · {text}"))
                     results.append(str(path))
                     progress(int((index + 1) / len(selected) * 100), "Готов: " + str(path))
@@ -1240,6 +1382,7 @@ class MainWindow(QMainWindow):
         if self.dirty and QMessageBox.question(self, "Закрыть Clipnado", "Есть несохранённые изменения. Автоматическая копия сохранена для восстановления. Закрыть программу?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             event.ignore()
             return
+        self.close_export_preview()
         self.player.stop()
         self.player.setSource(QUrl())
         self.still_timer.stop()

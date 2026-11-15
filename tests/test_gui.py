@@ -348,3 +348,110 @@ def test_reopening_query_results_after_transcript_edit_rejects_addition(app, win
     assert window.errors and not window.project.candidates
     window.errors.clear()
     window.close_assistant_dialog()
+
+
+def test_mixed_export_uses_individual_layouts_and_saves_choices(app, window, media, tmp_path, monkeypatch):
+    from clipnado.models import Candidate
+    from clipnado.media import probe
+    from test_export import frame
+    window.media_loaded(media)
+    clips = [Candidate(media.source_file_id, start, start+1000, 80-i, 'Юмор', 'Момент', selected=True)
+             for i, start in enumerate((0, 1000, 4000))]
+    window.project.candidates = clips
+    window.visible_count = 1  # export includes all checked clips, including those hidden in the main table
+    window.refresh_candidates()
+    assert window.table.rowCount() == 1 and window.export_clips.rowCount() == 3
+    window.export_clips.cellWidget(1, 3).setCurrentIndex(1)
+    window.export_clips.cellWidget(2, 3).setCurrentIndex(2)
+    assert [c.export_layout for c in clips] == [None, 'blur_center', 'tt_fill']
+    window.aspect.setCurrentText('1:1')
+    window.resolution.setCurrentText('720')
+    window.export_folder.setText(str(tmp_path/'mixed'))
+    monkeypatch.setattr('clipnado.app.LocalModelProvider.analyze', lambda *_a, **_k: pytest.fail('Export started a new analysis'))
+    window.export_selected(); wait_task(app, window)
+    paths = sorted((tmp_path/'mixed').glob('*.mp4'))
+    assert len(paths) == 3
+    assert [(probe(p, window.tools).width, probe(p, window.tools).height) for p in paths] == [(720,720),(720,720),(720,1280)]
+    pixels = [frame(p, window.tools, .2) for p in paths]
+    assert max(pixels[0][-720*100*3:]) <= 5  # reserved animation zone
+    assert pixels[1][-3] > 180 and pixels[2][-3] > 180  # both modes fill the lower canvas
+    assert 'Экспорт завершён: 3' in window.status.text()
+    path=tmp_path/'individual-layouts.json'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *_: (str(path), ''))
+    window.save(); wait_task(app, window)
+    window.load_project_path(path); wait_task(app, window)
+    assert [c.export_layout for c in window.project.candidates] == [None,'blur_center','tt_fill']
+    assert [window.export_clips.cellWidget(i,3).currentIndex() for i in range(3)] == [0,1,2]
+    # Common defaults change inherited rows; explicit clip choices remain stable.
+    window.export_layout.setCurrentIndex(2)
+    assert [window.export_clips.cellWidget(i,3).currentIndex() for i in range(3)] == [2,1,2]
+    window.apply_layout_to_selected()
+    assert all(c.export_layout is None for c in window.project.candidates)
+    assert all(window.export_clips.cellWidget(i,3).currentIndex()==2 for i in range(3))
+
+
+def test_export_choices_follow_clip_identity_across_selection_and_sort(app, window, media):
+    from clipnado.models import Candidate
+    window.media_loaded(media)
+    a=Candidate(media.source_file_id, 0, 1000, 60, 'Юмор', 'Первый', selected=True)
+    b=Candidate(media.source_file_id, 4000, 5000, 90, 'Юмор', 'Второй', selected=True)
+    window.project.candidates=[a,b];window.visible_count=2;window.refresh_candidates()
+    window.export_clips.cellWidget(0,3).setCurrentIndex(2)
+    window.sort.setCurrentText('По рейтингу')
+    assert a.export_layout=='tt_fill' and b.export_layout is None
+    window.table.item(1,0).setCheckState(Qt.Unchecked)
+    assert window.export_clips.rowCount()==1
+    assert window.export_clips.item(0,0).data(Qt.UserRole)==b.id
+    window.table.item(1,0).setCheckState(Qt.Checked)
+    assert window.export_clips.rowCount()==2 and window.export_clips.cellWidget(0,3).currentIndex()==2
+
+
+def test_mixed_export_validates_all_clips_before_creating_files(app, window, media, tmp_path):
+    from clipnado.models import Candidate
+    window.media_loaded(media)
+    window.project.candidates=[
+        Candidate(media.source_file_id,0,1000,80,'Юмор','Фон',selected=True,export_layout='blur_center'),
+        Candidate(media.source_file_id,4000,5000,80,'Юмор','Зона',selected=True,export_layout='top_black')]
+    window.project.segments=[Segment(0,8000,'Текст')]
+    window.refresh_candidates()
+    window.export_layout.setCurrentIndex(1)
+    assert window.top.isEnabled(), 'An individually selected upper-zone layout still needs its controls'
+    window.subtitle_mode.setCurrentIndex(2);window.subtitle_y.setValue(80)
+    window.export_folder.setText(str(tmp_path/'invalid-mixed'))
+    window.export_selected()
+    assert window.task_thread is None and window.errors and '00:00:04.000' in str(window.errors[0])
+    assert not list((tmp_path/'invalid-mixed').glob('*.mp4'))
+    window.errors.clear()
+
+
+def test_export_framing_preview_uses_chosen_clip_and_mode(app, window, media):
+    from clipnado.models import Candidate
+    from clipnado.preview import VideoPreview
+    window.media_loaded(media)
+    window.project.candidates=[Candidate(media.source_file_id,0,1000,80,'Юмор','Кадр',selected=True,export_layout='tt_fill')]
+    window.refresh_candidates()
+    window.preview_export_clip();wait_task(app,window)
+    dialog=window.export_preview_dialog
+    assert dialog and dialog.isVisible()
+    preview=dialog.findChild(VideoPreview)
+    assert (preview.image.width(),preview.image.height())==(360,640)
+    assert preview.image.pixelColor(10,10).red()>180
+    window.export_clips.cellWidget(0,3).setCurrentIndex(1)
+    assert window.export_preview_dialog is None
+
+
+def test_boundary_undo_preserves_later_export_choice(app, window, media):
+    import copy
+    from clipnado.models import Candidate
+    from clipnado.local_llm import LocalAnalysisResult
+    window.media_loaded(media)
+    window.minimum.setValue(2);window.add_manual()
+    anchor=copy.deepcopy(window.project.candidates[0])
+    alternative=Candidate(media.source_file_id,1000,4000,80,'Юмор','Границы')
+    window.boundaries_ready(anchor,media.source_file_id,LocalAnalysisResult([alternative]),[Segment(0,8000,'Диалог')],[])
+    window.assistant_dialog.apply_selected();app.processEvents()
+    window.export_clips.cellWidget(0,3).setCurrentIndex(2)
+    window.undo_boundaries()
+    clip=window.project.candidates[0]
+    assert (clip.start_ms,clip.end_ms)==(anchor.start_ms,anchor.end_ms)
+    assert clip.export_layout=='tt_fill'

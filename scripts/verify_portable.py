@@ -30,7 +30,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 from clipnado.app import MainWindow
 from clipnado.media import probe
-from clipnado.models import Segment
+from clipnado.models import Candidate, Segment
 from clipnado.process import run
 import clipnado.local_llm as llm
 app = QApplication([])
@@ -70,16 +70,23 @@ def check():
         w.player.pause()
         w.player.setPosition(0)
         w.minimum.setValue(2)
-        w.add_manual()
+        w.project.candidates = [Candidate(w.project.media.source_file_id, 0, 2000, 80, 'Юмор', 'Portable export', selected=True) for _ in range(3)]
+        w.refresh_candidates()
+        w.export_clips.cellWidget(1, 3).setCurrentIndex(1)
+        w.export_clips.cellWidget(2, 3).setCurrentIndex(2)
         w.resolution.setCurrentText('720')
-        w.export_layout.setCurrentIndex(1)
+        w.aspect.setCurrentText('1:1')
         w.export_folder.setText(sys.argv[1])
         stage[0] = 1
         w.export_selected()
     elif stage[0] == 1 and w.task_thread is None:
-        assert list(Path(sys.argv[1]).glob('*.mp4'))
-        assert w.project.export.layout == 'blur_center'
+        files = sorted(Path(sys.argv[1]).glob('*.mp4'))
+        assert len(files) == 3
+        infos = [probe(p, w.tools) for p in files]
+        assert [(m.width, m.height) for m in infos] == [(720,720), (720,720), (720,1280)]
+        assert [c.export_layout for c in w.project.candidates] == [None, 'blur_center', 'tt_fill']
         print('PACKAGED_GUI_EXPORT_OK', flush=True)
+        print('PACKAGED_MIXED_EXPORT_TIKTOK_OK', flush=True)
         w.project.segments = [Segment(0, 1000, 'Вопрос'), Segment(1000, 2000, 'Ответ')]
         llm.run = protocol_fixture
         stage[0] = 2
@@ -105,6 +112,16 @@ def check():
         assert (w.project.candidates[0].start_ms, w.project.candidates[0].end_ms) == (0, 2000)
         w.close_assistant_dialog()
         print('PACKAGED_BOUNDARY_REVIEW_PROTOCOL_OK', flush=True)
+        stage[0] = 5
+        w.export_clips.cellWidget(0, 3).setCurrentIndex(2)
+        w.preview_export_clip()
+    elif stage[0] == 5 and w.task_thread is None:
+        from clipnado.preview import VideoPreview
+        assert w.export_preview_dialog
+        image = w.export_preview_dialog.findChild(VideoPreview).image
+        assert (image.width(), image.height()) == (360, 640)
+        w.close_export_preview()
+        print('PACKAGED_EXPORT_PREVIEW_OK', flush=True)
         timer.stop()
         w.dirty = False
         w.close()
@@ -118,7 +135,8 @@ sys.exit(app.exec())
                                 capture_output=True, encoding="utf-8", errors="replace", timeout=360)
         print(result.stdout, flush=True)
         required = ("PACKAGED_ACTUAL_QWEN_TOKEN_OK", "PACKAGED_VIDEO_PIXELS_OK", "PACKAGED_GUI_EXPORT_OK", "PACKAGED_LOCAL_WORKFLOW_OK",
-                    "PACKAGED_CONTENT_QUERY_PROTOCOL_OK", "PACKAGED_BOUNDARY_REVIEW_PROTOCOL_OK")
+                    "PACKAGED_CONTENT_QUERY_PROTOCOL_OK", "PACKAGED_BOUNDARY_REVIEW_PROTOCOL_OK",
+                    "PACKAGED_MIXED_EXPORT_TIKTOK_OK", "PACKAGED_EXPORT_PREVIEW_OK")
         if result.returncode or not all(tag in result.stdout for tag in required):
             raise RuntimeError("Packaged local runtime verification failed: " + result.stderr[-3000:])
 

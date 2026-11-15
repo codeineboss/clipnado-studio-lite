@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from .media import Tools, require_space
@@ -11,9 +12,20 @@ from .process import Cancellation, Progress, run
 from .subtitles import clip_segments, to_ass, to_srt
 
 
+def clip_export_settings(settings: ExportSettings, candidate: Candidate) -> ExportSettings:
+    """Resolve a clip's saved choice without mutating the shared settings."""
+    effective = replace(settings, layout=settings.layout if candidate.export_layout is None else candidate.export_layout)
+    effective.validate()
+    return effective
+
+
 def video_filter(settings: ExportSettings) -> str:
     settings.validate()
     width, height = settings.dimensions()
+    if settings.layout == "tt_fill":
+        return (f"fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,"
+                f"scale={width}:{height}:force_original_aspect_ratio=increase:force_divisible_by=2:flags=lanczos,"
+                f"crop={width}:{height}:(iw-ow)/2:(ih-oh)/2,setsar=1,format=yuv420p")
     if settings.layout == "blur_center":
         # Downscale only the background before Gaussian blur. Both branches
         # originate from the same frame/PTS; the foreground remains uncropped.
@@ -54,7 +66,7 @@ def validate_export(path: Path, tools: Tools, settings: ExportSettings, duration
 def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment], settings: ExportSettings,
                 folder: Path, tools: Tools, token: Cancellation, progress: Progress) -> Path:
     candidate.validate(media)
-    settings.validate()
+    settings = clip_export_settings(settings, candidate)
     token.check()
     subtitles = clip_segments(segments, candidate.start_ms, candidate.end_ms)
     if settings.subtitles != "off" and not subtitles:
@@ -86,8 +98,8 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
             if settings.subtitles == "burn":
                 width, height = settings.dimensions()
                 (stage / "subs.ass").write_text(to_ass(subtitles, width, height, settings.subtitle_y,
-                                                        0 if settings.layout == "blur_center" else settings.video_y,
-                                                        1 if settings.layout == "blur_center" else settings.top_fraction), encoding="utf-8-sig")
+                                                        settings.video_y if settings.layout == "top_black" else 0,
+                                                        settings.top_fraction if settings.layout == "top_black" else 1), encoding="utf-8-sig")
                 # Relative ASCII filter paths work with Windows drives, Cyrillic folders and apostrophes.
                 vf += ",ass=filename=subs.ass"
             args = [tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{candidate.start_ms / 1000:.3f}",
@@ -114,3 +126,25 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
     finally:
         if lock:
             lock.unlink(missing_ok=True)
+
+
+def composition_frame(media: MediaInfo, candidate: Candidate, settings: ExportSettings,
+                      tools: Tools, token: Cancellation) -> bytes:
+    """Render the same composition as export; captions are intentionally omitted."""
+    candidate.validate(media)
+    settings = clip_export_settings(settings, candidate)
+    at = min(candidate.start_ms + 1000, (candidate.start_ms + candidate.end_ms) // 2)
+    with tempfile.TemporaryDirectory(prefix="clipnado-composition-") as tmp:
+        path = Path(tmp) / "frame.png"
+        vf = video_filter(settings) + ",scale=360:640:force_original_aspect_ratio=decrease"
+        # Accurate seek can land after the final encoded frame of a short or
+        # low-FPS input. Try the preceding visible frame instead of failing on
+        # a missing PNG at EOF.
+        previous = max(0, at - max(100, 1000 / media.fps if media.fps else 1000))
+        for position in (at, previous):
+            run([tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{position / 1000:.3f}",
+                 "-i", media.path, "-an", "-sn", "-dn", "-map", "0:v:0", "-frames:v", "1",
+                 "-filter_threads", str(tools.threads), "-vf", vf, "-threads", str(tools.threads), str(path)], token, timeout=60)
+            if path.is_file():
+                return path.read_bytes()
+        raise ValueError("В этом месте видео нет доступного кадра для предпросмотра.")
