@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clipnado-studio-lite"
-version = "0.1.8"
+version = "0.1.9"
 description = "Локальный отбор и экспорт непрерывных видеоэпизодов"
 requires-python = ">=3.10,<3.14"
-dependencies = ["PySide6==6.8.3"]
+dependencies = ["PySide6==6.8.3", "numpy==2.2.6", "opencv-python-headless==4.11.0.86", "onnxruntime==1.22.1"]
 
 [project.optional-dependencies]
 dev = ["pytest==8.3.5", "pyinstaller==6.12.0"]
@@ -20,3 +20,6 @@ include = ["clipnado*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+clipnado = ["vision_models/*"]

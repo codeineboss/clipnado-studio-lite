@@ -141,6 +141,7 @@ class ExportSettings:
     subtitles: str = "off"
     subtitle_y: float = 0.31
     layout: str = "top_black"
+    tiktok_tracking: str = "speaker"
 
     def validate(self) -> None:
         for name in ("resolution", "fps", "quality"):
@@ -153,6 +154,8 @@ class ExportSettings:
             raise ValueError("Неверная частота кадров или качество")
         if not isinstance(self.layout, str) or self.layout not in EXPORT_LAYOUTS:
             raise ValueError("Неизвестное оформление видео")
+        if self.tiktok_tracking not in ("speaker", "center"):
+            raise ValueError("Неизвестный режим автокадра TikTok")
         if self.layout == "top_black" and (not 0.2 <= self.top_fraction <= 1 or not 0 <= self.video_y <= 1 - self.top_fraction + 1e-9):
             raise ValueError("Верхняя зона выходит за холст")
         if self.subtitles not in ("off", "srt", "burn") or not 0 <= self.subtitle_y <= 1:

@@ -391,6 +391,9 @@ class MainWindow(QMainWindow):
         self.export_group = group
         form = QFormLayout(group)
         self.export_layout = combo(list(EXPORT_LAYOUTS.values()))
+        self.tiktok_tracking = QCheckBox("Автокадр: следить за говорящим и переключать собеседников")
+        self.tiktok_tracking.setChecked(True)
+        self.tiktok_tracking.setToolTip("Локальный анализ лиц, звука и движения рта только выбранных клипов. Выключите для прежнего неподвижного центра.")
         self.aspect = combo(["9:16", "16:9", "1:1"])
         self.resolution = combo(["720", "1080"], "1080")
         self.fps = combo(["24", "25", "30", "50", "60"], "30")
@@ -399,7 +402,7 @@ class MainWindow(QMainWindow):
         self.video_y = spin(0, 80, 0)
         self.subtitle_y = spin(0, 99, 31)
         self.subtitle_mode = combo(["Выключены", "Отдельный SRT", "Встроить в видео"])
-        for label, widget in [("Общее оформление", self.export_layout), ("Холст для первых двух вариантов", self.aspect), ("Размер, p", self.resolution), ("FPS", self.fps), ("Качество H.264", self.quality),
+        for label, widget in [("Общее оформление", self.export_layout), ("Только для TikTok", self.tiktok_tracking), ("Холст для первых двух вариантов", self.aspect), ("Размер, p", self.resolution), ("FPS", self.fps), ("Качество H.264", self.quality),
                               ("Высота зоны видео, %", self.top), ("Отступ зоны сверху, %", self.video_y),
                               ("Субтитры", self.subtitle_mode), ("Позиция текста от верха, %", self.subtitle_y)]:
             form.addRow(label, widget)
@@ -436,8 +439,9 @@ class MainWindow(QMainWindow):
         self.export_clips.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.export_clips.setMinimumHeight(130)
         layout.insertWidget(0, self.export_clip_controls)
-        layout.insertWidget(1, note("TikTok заполняет кадр 9:16 с обрезкой краёв по центру. «Предпросмотр кадра» покажет кадрирование выбранной строки."))
+        layout.insertWidget(1, note("TikTok: автокадр переключается между видимыми говорящими. Снимите галочку для неподвижного центра. Предпросмотр показывает один кадр; смену собеседников проверяйте в готовом MP4."))
         layout.insertWidget(2, self.export_clips, 2)
+        self.tiktok_tracking.toggled.connect(self.export_layout_changed)
         self.export_layout.currentIndexChanged.connect(self.export_layout_changed)
         self.export_layout_changed()
         for widget in (self.aspect, self.resolution, self.fps, self.quality, self.subtitle_mode):
@@ -462,14 +466,17 @@ class MainWindow(QMainWindow):
         code = list(EXPORT_LAYOUTS)[self.export_layout.currentIndex()]
         upper = code == "top_black" or bool(self.project and any(
             c.selected and c.export_layout == "top_black" for c in self.project.candidates))
+        tiktok = code == "tt_fill" or bool(self.project and any(
+            c.selected and c.export_layout == "tt_fill" for c in self.project.candidates))
+        self.tiktok_tracking.setEnabled(tiktok)
         self.top.setEnabled(upper)
         self.video_y.setEnabled(upper)
         notices = {
             "top_black": "Видео целиком вписано сверху, нижняя тёмная зона остаётся для анимаций.",
             "blur_center": "Видео целиком по центру, фон — его синхронная увеличенная размытая копия.",
-            "tt_fill": "TikTok: вертикальный кадр 9:16 без полей и фона. Видео заполняет кадр без растяжения; лишние края обрезаются по центру. Проверьте кадрирование в предпросмотре.",
+            "tt_fill": "TikTok: вертикальный кадр 9:16 без полей и фона. Видео заполняет кадр без растяжения. " + ("Автокадр следует за лицом и переключает собеседников по звуку и движению рта." if self.tiktok_tracking.isChecked() else "Используется неподвижное центральное кадрирование."),
         }
-        self.export_notice.setText("Общее оформление: " + notices[code] + " В таблице можно выбрать свой вариант для каждого клипа. TikTok заполняет 9:16 с обрезкой краёв по центру — проверьте важные детали в предпросмотре. Разрешение, FPS, качество и субтитры — общие. Исходный звук сохраняется.")
+        self.export_notice.setText("Общее оформление: " + notices[code] + " В таблице можно выбрать свой вариант для каждого клипа. Автокадр работает локально только для TikTok. При дубляже, голосе за кадром или скрытых лицах возможны ошибки. Разрешение, FPS, качество и субтитры — общие. Исходный звук сохраняется.")
         self.refresh_export_clips()
 
     def refresh_export_clips(self):
@@ -537,6 +544,7 @@ class MainWindow(QMainWindow):
             settings = clip_export_settings(self.export_settings(), candidate)
             media, candidate, tools = copy.deepcopy(self.project.media), copy.deepcopy(candidate), copy.copy(self.tools)
             self.close_export_preview()
+            notes = []
             def completed(data):
                 image = QImage.fromData(data)
                 if image.isNull():
@@ -546,7 +554,7 @@ class MainWindow(QMainWindow):
                 dialog.setAttribute(Qt.WA_DeleteOnClose)
                 dialog.setWindowTitle("Предпросмотр оформления")
                 layout = QVBoxLayout(dialog)
-                heading = note(f"{timecode(candidate.start_ms)}–{timecode(candidate.end_ms)} · {EXPORT_LAYOUTS[settings.layout]}\nКадр оформления выбранного клипа, без субтитров. Это проверка кадрирования; качество MP4 задаётся в настройках экспорта.")
+                heading = note(f"{timecode(candidate.start_ms)}–{timecode(candidate.end_ms)} · {EXPORT_LAYOUTS[settings.layout]}\nОдин кадр выбранного клипа, без субтитров. Переключения между собеседниками смотрите в готовом MP4. Качество MP4 задаётся в экспорте." + ("\n" + "\n".join(notes) if notes else ""))
                 layout.addWidget(heading)
                 preview = VideoPreview()
                 preview.set_image(image)
@@ -556,7 +564,7 @@ class MainWindow(QMainWindow):
                 self.export_preview_dialog = dialog
                 dialog.destroyed.connect(lambda: setattr(self, "export_preview_dialog", None) if self.export_preview_dialog is dialog else None)
                 dialog.show()
-            self.start_task(lambda token, progress: composition_frame(media, candidate, settings, tools, token), completed)
+            self.start_task(lambda token, progress: composition_frame(media, candidate, settings, tools, token, cache=self.cache, progress=progress, notes=notes), completed)
         except ValueError as exc:
             self.show_error(exc)
 
@@ -732,6 +740,7 @@ class MainWindow(QMainWindow):
         for c in self.categories:
             c.setChecked(c.text() in p.search.categories)
         self.export_layout.setCurrentIndex(list(EXPORT_LAYOUTS).index(p.export.layout))
+        self.tiktok_tracking.setChecked(p.export.tiktok_tracking == "speaker")
         self.aspect.setCurrentText(p.export.aspect)
         self.resolution.setCurrentText(str(p.export.resolution))
         self.fps.setCurrentText(str(p.export.fps))
@@ -763,7 +772,8 @@ class MainWindow(QMainWindow):
         result = ExportSettings(self.aspect.currentText(), int(self.resolution.currentText()), int(self.fps.currentText()),
                                 [18, 20, 25][self.quality.currentIndex()], self.top.value() / 100, self.video_y.value() / 100,
                                 ["off", "srt", "burn"][self.subtitle_mode.currentIndex()], self.subtitle_y.value() / 100,
-                                list(EXPORT_LAYOUTS)[self.export_layout.currentIndex()])
+                                list(EXPORT_LAYOUTS)[self.export_layout.currentIndex()],
+                                "speaker" if self.tiktok_tracking.isChecked() else "center")
         result.validate()
         return result
 
@@ -1230,21 +1240,22 @@ class MainWindow(QMainWindow):
             for i, (c, effective) in enumerate(plan, 1):
                 width, height = effective.dimensions()
                 self.queue.append(f"{i}. {timecode(c.start_ms)} → {timecode(c.end_ms)} · {EXPORT_LAYOUTS[effective.layout]} · {width}×{height} — в очереди")
+            export_notes = []
             def execute(token, progress):
                 results = []
                 for index, (c, effective) in enumerate(plan):
                     token.check()
                     path = export_clip(project.media, c, project.segments, effective, output, tools, token,
-                                       lambda value, text: progress(int((index + value / 100) / len(selected) * 100), f"{index + 1}/{len(selected)} · {text}"))
+                                       lambda value, text: progress(int((index + value / 100) / len(selected) * 100), f"{index + 1}/{len(selected)} · {text}"), cache=self.cache, notes=export_notes)
                     results.append(str(path))
                     progress(int((index + 1) / len(selected) * 100), "Готов: " + str(path))
                 return results
-            self.start_task(execute, self.exports_ready)
+            self.start_task(execute, lambda paths: self.exports_ready(paths, export_notes))
         except (ValueError, OSError) as exc:
             self.show_error(exc)
 
-    def exports_ready(self, paths):
-        self.queue.setPlainText("Проверенные файлы:\n" + "\n".join(paths))
+    def exports_ready(self, paths, notes=()):
+        self.queue.setPlainText("Проверенные файлы:\n" + "\n".join(paths) + ("\n\nАвтокадр:\n" + "\n".join(dict.fromkeys(notes)) if notes else ""))
         self.status.setText(f"Экспорт завершён: {len(paths)} файлов. MP4 проверены декодированием.")
         self.progress.setValue(100)
 

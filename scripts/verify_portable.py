@@ -128,6 +128,24 @@ def check():
         assert (image.width(), image.height()) == (360, 640)
         w.close_export_preview()
         print('PACKAGED_EXPORT_PREVIEW_OK', flush=True)
+        from scripts.vision_smoke import make_fixture
+        path = make_fixture(Path(sys.argv[1]) / 'two-faces.mp4', w.tools.ffmpeg)
+        w.media_loaded(probe(path, w.tools))
+        w.project.candidates = [Candidate(w.project.media.source_file_id, 0, 3000, 80, 'Юмор', 'Actual local vision execution', selected=True, export_layout='tt_fill')]
+        w.refresh_candidates()
+        w.tiktok_tracking.setChecked(True)
+        w.export_folder.setText(str(Path(sys.argv[1]) / 'vision'))
+        stage[0] = 6
+        w.export_selected()
+    elif stage[0] == 6 and w.task_thread is None:
+        files = list((Path(sys.argv[1]) / 'vision').glob('*.mp4'))
+        assert len(files) == 1
+        info = probe(files[0], w.tools)
+        assert (info.width, info.height, info.has_audio) == (720, 1280, True)
+        plans = [json.loads(p.read_text(encoding='utf-8')) for p in w.cache.rglob('plan.json')]
+        assert any(p['info']['max_faces'] == 2 and p['info']['speaker_model_used'] and p['points'][0][1] < .2 for p in plans)
+        assert not list(w.cache.rglob('*.jpg')) and not list(w.cache.rglob('*.wav'))
+        print('PACKAGED_ACTUAL_SPEAKER_AUTOCROP_OK', flush=True)
         timer.stop()
         w.dirty = False
         w.close()
@@ -142,7 +160,7 @@ sys.exit(app.exec())
         print(result.stdout, flush=True)
         required = ("PACKAGED_ACTUAL_QWEN_TOKEN_OK", "PACKAGED_VIDEO_PIXELS_OK", "PACKAGED_GUI_EXPORT_OK", "PACKAGED_LOCAL_WORKFLOW_OK",
                     "PACKAGED_CONTENT_QUERY_PROTOCOL_OK", "PACKAGED_BOUNDARY_REVIEW_PROTOCOL_OK",
-                    "PACKAGED_MIXED_EXPORT_TIKTOK_OK", "PACKAGED_EXPORT_PREVIEW_OK")
+                    "PACKAGED_MIXED_EXPORT_TIKTOK_OK", "PACKAGED_EXPORT_PREVIEW_OK", "PACKAGED_ACTUAL_SPEAKER_AUTOCROP_OK")
         if result.returncode or not all(tag in result.stdout for tag in required):
             raise RuntimeError("Packaged local runtime verification failed: " + result.stderr[-3000:])
 

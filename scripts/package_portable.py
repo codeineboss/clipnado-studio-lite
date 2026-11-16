@@ -52,7 +52,10 @@ def main():
     packages.mkdir(parents=True)
     wheel_manifest = []
     for wheel in sorted(args.wheels.glob("*.whl")):
-        if not wheel.name.lower().startswith(("pyside6-", "pyside6_addons-", "pyside6_essentials-", "shiboken6-")):
+        if not wheel.name.lower().startswith(("pyside6-", "pyside6_addons-", "pyside6_essentials-", "shiboken6-",
+                                                "numpy-", "opencv_python_headless-", "onnxruntime-", "coloredlogs-",
+                                                "flatbuffers-", "humanfriendly-", "mpmath-", "protobuf-", "sympy-",
+                                                "packaging-", "pyreadline3-")):
             raise ValueError("Unexpected dependency in local-only package: " + wheel.name)
         if not (wheel.name.endswith("win_amd64.whl") or wheel.name.endswith("none-any.whl")):
             raise ValueError("Non-Windows wheel: " + wheel.name)
@@ -88,6 +91,7 @@ def main():
                 "llama_commit": "10e9780154365b191fb43ca4830659ef12def80f", "runtime_network": False,
                 "qwen_model": {"file": "Qwen_Qwen3-4B-Instruct-2507-Q3_K_M.gguf", "separate_asset": True,
                                "sha256": "35295e9a0a42eff5ebc592412c754991c0b6cc36bf4f282b2a491b211476752d"},
+                "vision_models": json.loads((root / "clipnado/vision_models/provenance.json").read_text(encoding="utf-8")),
                 "windows_execution_verified": False, "wheels": wheel_manifest,
                 "files": {str(p.relative_to(dest)).replace("\\", "/"): sha(p) for p in sorted(dest.rglob("*")) if p.is_file()}}
     (dest / "MANIFEST.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

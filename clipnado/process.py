@@ -43,7 +43,7 @@ def run(args: list[str], token: Cancellation | None = None, cwd: Path | None = N
     with tempfile.TemporaryDirectory(prefix="clipnado-process-") as temp_dir, open(Path(temp_dir) / "output.log", "w+b") as output:
         try:
             executable = Path(args[0])
-            command = [str(executable.resolve()) if executable.is_file() else str(args[0]), *[str(x) for x in args[1:]]]
+            command = [str(executable.absolute()) if executable.is_file() else str(args[0]), *[str(x) for x in args[1:]]]
             child = subprocess.Popen(command, stdin=subprocess.DEVNULL,
                                      stdout=output, stderr=subprocess.STDOUT, cwd=cwd, creationflags=flags)
         except FileNotFoundError as exc:

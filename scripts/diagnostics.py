@@ -29,6 +29,13 @@ def main():
         print("Qt imports OK:", qVersion())
     except Exception as exc:
         print("Qt ERROR", str(exc))
+    try:
+        from clipnado.reframe import MODEL_FILES, model_bytes
+        for name in MODEL_FILES:
+            model_bytes(name)
+            print("Autocrop model OK:", name)
+    except Exception as exc:
+        print("Autocrop ERROR", str(exc))
     print("No data was sent over the network.")
 
 

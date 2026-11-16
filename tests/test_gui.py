@@ -376,10 +376,14 @@ def test_mixed_export_uses_individual_layouts_and_saves_choices(app, window, med
     assert max(pixels[0][-720*100*3:]) <= 5  # reserved animation zone
     assert pixels[1][-3] > 180 and pixels[2][-3] > 180  # both modes fill the lower canvas
     assert 'Экспорт завершён: 3' in window.status.text()
+    assert window.tiktok_tracking.isChecked() and window.tiktok_tracking.isEnabled()
+    window.tiktok_tracking.setChecked(False)
     path=tmp_path/'individual-layouts.json'
     monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *_: (str(path), ''))
     window.save(); wait_task(app, window)
     window.load_project_path(path); wait_task(app, window)
+    assert not window.tiktok_tracking.isChecked()
+    assert window.project.export.tiktok_tracking == 'center'
     assert [c.export_layout for c in window.project.candidates] == [None,'blur_center','tt_fill']
     assert [window.export_clips.cellWidget(i,3).currentIndex() for i in range(3)] == [0,1,2]
     # Common defaults change inherited rows; explicit clip choices remain stable.

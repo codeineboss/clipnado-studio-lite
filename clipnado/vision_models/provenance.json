@@ -1,0 +1,18 @@
+{
+  "yunet": {
+    "file": "yunet-2023mar.onnx",
+    "source": "https://github.com/opencv/opencv_zoo/tree/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_detection_yunet",
+    "sha256": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+    "license": "MIT"
+  },
+  "light_asd": {
+    "file": "light-asd.onnx",
+    "source": "https://github.com/Junhua-Liao/Light-ASD/tree/ed38c232de5efe0261dbd68627c0ade7cdfe14eb",
+    "checkpoint": "weight/pretrain_AVA_CVPR.model",
+    "checkpoint_sha256": "d44bc3ea7baa8e0946fa3921311714a630ed8b90a1928fab0dbe30d918909317",
+    "sha256": "a6df8167180cc9c8c039f4f244b4bcd393c97a20560ef766c745c99f5c84ce14",
+    "license": "MIT",
+    "conversion": "Independent standard-operator ONNX graph: scripts/export_active_speaker.py. No upstream application code is used at runtime.",
+    "equivalence": {"reference": "upstream model definition + torch 2.6.0+cpu", "frames": [1, 25, 61], "max_absolute_logit_error": 0.000002384185791015625}
+  }
+}
