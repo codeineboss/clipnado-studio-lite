@@ -13,7 +13,7 @@ permissions:
 jobs:
   deliver:
     runs-on: windows-2022
-    timeout-minutes: 75
+    timeout-minutes: 110
     env:
       CLIPNADO_DATA_DIR: '${{ github.workspace }}/.clipnado-test-data'
       CLIPNADO_TEST_WHISPER: '${{ github.workspace }}/tools/whisper-cli.exe'
@@ -120,6 +120,11 @@ jobs:
         run: |
           ./.venv/Scripts/python.exe -m pytest -q --junitxml=qa/test-results-windows.xml
           if ($LASTEXITCODE -ne 0) { throw 'Windows regression suite failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-test-report
+          path: qa/test-results-windows.xml
       - name: Build native launcher and collect dependencies
         shell: pwsh
         run: |
@@ -157,8 +162,3 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Release upload failed' }
           gh release edit $env:RELEASE_TAG --draft=false --prerelease --target $env:GITHUB_SHA --notes-file output/release-notes.md --repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: windows-test-report
-          path: qa/test-results-windows.xml
