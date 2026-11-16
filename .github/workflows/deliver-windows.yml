@@ -58,6 +58,13 @@ jobs:
         run: |
           ./.venv/Scripts/python.exe -m pip install --require-hashes -r requirements-windows.lock
           if ($LASTEXITCODE -ne 0) { throw 'Locked dependencies failed' }
+      - name: Check local camera and process cancellation before long inference
+        env:
+          QT_QPA_PLATFORM: offscreen
+        shell: pwsh
+        run: |
+          ./.venv/Scripts/python.exe -m pytest tests/test_reframe.py tests/test_core.py -q
+          if ($LASTEXITCODE -ne 0) { throw 'Camera preflight failed' }
       - name: Build CPU Qwen and verify GGUF
         timeout-minutes: 25
         shell: pwsh
