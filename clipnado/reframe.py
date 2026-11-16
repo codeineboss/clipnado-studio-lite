@@ -18,7 +18,7 @@ from .process import Cancellation, Cancelled, Progress, run
 from .projects import atomic_json
 from .media import extract_audio, require_space
 
-VERSION = 1
+VERSION = 2
 ANALYSIS_FPS = 25
 MODEL_FILES = {
     "yunet-2023mar.onnx": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",

@@ -30,9 +30,9 @@ def validate_test_report(path):
                 'test_export_framing_preview_uses_chosen_clip_and_mode',
                 'test_actual_face_and_speaker_models_in_isolated_worker_and_cache',
                 'test_director_switches_between_speakers_without_centering_between_faces',
-                'test_mfcc_matches_independent_frontend_golden',
+                'test_mfcc_matches_independent_frontend_golden', 'test_visual_frontend_keeps_entire_face_not_only_mouth',
                 'test_cancel_local_vision_cleans_frames_and_does_not_cache'}
-    if len(cases) < 164 or not required <= names or any(
+    if len(cases) < 165 or not required <= names or any(
         c.find(tag) is not None for c in cases for tag in ('failure', 'error', 'skipped')
     ):
         raise RuntimeError('Complete Windows regression suite with actual local models did not pass')
@@ -67,6 +67,7 @@ Windows Server 2022 x64 / GitHub Actions: {validation_url}
 - Пройдено тестов: {len(cases)}, без пропусков и ошибок. Проверены GUI, настоящий FFmpeg, экспорт H.264/AAC и субтитров, отмена дочерних процессов, кэш и сохранение проекта.
 - Новое в 0.1.9: локальный автокадр TikTok. Настоящие YuNet и Light-ASD выполнены в отдельном процессе на синтетическом видео из двух NASA-портретов и тона. Проверены обнаружение двух лиц, выполнение аудиовизуальной модели, выбор видимого лица вместо пустого центра, повторное использование плана, удаление временных кадров и отмена. Статичный портрет с тоном не измеряет точность определения говорящего.
 - Директор камеры отдельно проверен на заданных оценках речи: переключение между собеседниками, подавление кратких всплесков, движение одного лица и смены планов. Настоящий FFmpeg закодировал заданные переключения: пиксели левого/правого кадра, ненулевое начало клипа, звук, SRT/ASS и правильный момент предпросмотра. Это тест логики камеры и рендера, не качества нейросети на реальных разговорах.
+- Вход Light-ASD — полное обнаруженное лицо 112×112, как при AVA-обучении; контракт защищён тестом. Дополнительно просмотрен один 20-секундный реальный образец: камера выбирает видимые лица, 2 переключения. Это не размеченный тест точности; подробности и источник в qa/LOCAL_AUTOCROP_019.md.
 - MFCC сравнен с независимой эталонной реализацией; самостоятельно построенный ONNX проверен против исходной PyTorch-модели на 1/25/61 кадре: максимальная ошибка logits 2.39e-6. Модель поставляется с зафиксированной суммой и MIT-лицензией. PyTorch в программе не нужен.
 - В Linux QEMU SandyBridge (AVX1, без AVX2/FMA/F16C/BMI2) успешно выполнены настоящий YuNet и Light-ASD. Это эмуляция CPU и Linux-библиотеки, не проверка Windows на физическом Xeon.
 - Сохранено из 0.1.8: реальный экспорт TikTok 9:16 для горизонтального, вертикального, квадратного и анаморфного исходника. Проверены заполнение холста без полей, центральное кадрирование, сохранение пропорций, звук, синхронная вспышка и все режимы субтитров. Режим TikTok остаётся вертикальным при других общих настройках холста.

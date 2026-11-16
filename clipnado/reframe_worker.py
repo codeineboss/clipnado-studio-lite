@@ -205,22 +205,22 @@ def detect_tracks(files, threads):
     return states, expanded, width, height
 
 
-def mouth_patch(image, box):
+def face_patch(image, box):
+    """Use the entire detected face, as in the AVA training frontend.
+
+    A mouth-only center crop discards the head geometry this checkpoint was
+    trained on and can suppress actual speech scores despite visible lips.
+    """
     import cv2
 
     x, y, w, h = box
-    half = max(w, h) / 2
-    cx, cy = x + w / 2, y + h / 2
-    pad = int(half * 1.8) + 4
-    image = cv2.copyMakeBorder(
-        image, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=(110, 110, 110)
+    height, width = image.shape[:2]
+    left, top = max(0, int(x)), max(0, int(y))
+    right, bottom = min(width, max(left + 1, int(x + w))), min(
+        height, max(top + 1, int(y + h))
     )
-    left, right = int(cx + pad - half * 1.4), int(cx + pad + half * 1.4)
-    top, bottom = int(cy + pad - half), int(cy + pad + half * 1.8)
-    face = cv2.resize(
-        image[top:bottom, left:right], (224, 224), interpolation=cv2.INTER_LINEAR
-    )
-    return cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)[56:168, 56:168]
+    gray = cv2.cvtColor(image[top:bottom, left:right], cv2.COLOR_BGR2GRAY)
+    return cv2.resize(gray, (112, 112), interpolation=cv2.INTER_LINEAR)
 
 
 class SpeakerModel:
@@ -290,7 +290,7 @@ def score_tracks(files, states, tracks, audio_path, threads):
                     box = track["positions"][
                         min(track["positions"], key=lambda k: abs(k - i))
                     ]
-                visual.append(mouth_patch(read_frame(files[i]), box))
+                visual.append(face_patch(read_frame(files[i]), box))
             probabilities = model.probabilities(
                 features[start * 4 : stop * 4], np.asarray(visual)
             )

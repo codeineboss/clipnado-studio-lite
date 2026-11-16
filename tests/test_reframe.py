@@ -281,3 +281,21 @@ def test_subprocess_retains_selected_python_environment():
     assert Path(prefix) == Path(
         sys.prefix
     ), "Resolving a venv interpreter symlink silently selects the base Python"
+
+
+def test_visual_frontend_keeps_entire_face_not_only_mouth():
+    import numpy as np
+    from clipnado.reframe_worker import face_patch
+
+    # Four corner markings represent full face boundaries. A tighter mouth
+    # crop loses them, the mismatch observed on an actual conversation sample.
+    image = np.zeros((200, 200, 3), dtype=np.uint8)
+    image[20:70, 30:80] = 60
+    image[20:70, 80:130] = 120
+    image[70:120, 30:80] = 180
+    image[70:120, 80:130] = 240
+    patch = face_patch(image, (30, 20, 100, 100))
+    assert patch.shape == (112, 112) and patch.dtype == np.uint8
+    assert tuple(
+        int(patch[y, x]) for y, x in ((5, 5), (5, 106), (106, 5), (106, 106))
+    ) == (60, 120, 180, 240)
