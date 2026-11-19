@@ -7,6 +7,10 @@ import sys
 
 
 def main():
+    # The CI host can default to cp1252 even though child output is UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser()
     parser.add_argument("folder", type=Path)
     parser.add_argument("--semantic-model", required=True, type=Path)
@@ -165,7 +169,7 @@ def check():
         assert top.red()>180 and top.blue()<40 and bottom.blue()>180 and bottom.red()<40
         print('PACKAGED_GAMING_PIXELS_OK',flush=True)
         w.project.candidates[0].export_layout='top_black'
-        w.project.segments=[Segment(0,8000,'Проверяем крупные субтитры на русском языке и плавную анимацию в нижней части.')]
+        w.project.segments=[Segment(0,w.project.media.duration_ms,'Проверяем крупные субтитры на русском языке и плавную анимацию в нижней части.')]
         w.refresh_candidates();w.color_mode.setCurrentIndex(1);w.normalize_audio.setChecked(True)
         w.readable_subtitles.setChecked(True);w.subtitle_mode.setCurrentIndex(2);w.animation_mode.setCurrentIndex(3)
         w.export_folder.setText(str(Path(sys.argv[1])/'comfort'))
