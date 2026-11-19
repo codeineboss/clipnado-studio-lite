@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -174,3 +175,10 @@ def test_long_import(duration, tmp_path, tools):
     assert abs(info.duration_ms - duration * 1000) < 50
     assert not info.has_audio
     assert info.width == 160 and info.height == 90
+
+
+def test_subprocess_retains_selected_python_environment():
+    import sys
+    from clipnado.process import run, Cancellation
+    prefix = run([sys.executable, '-c', 'import sys;print(sys.prefix)'], Cancellation()).strip()
+    assert Path(prefix) == Path(sys.prefix)

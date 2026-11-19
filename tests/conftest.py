@@ -30,3 +30,9 @@ def source(tmp_path_factory):
 def media(source, tools):
     from clipnado.media import probe
     return probe(source, tools)
+
+
+@pytest.fixture(scope='session')
+def gaming_source(tmp_path_factory, tools):
+    from scripts.gaming_smoke import make_fixture
+    return make_fixture(tmp_path_factory.mktemp('игровой стрим') / "камера и игра ' тест.mp4", tools.ffmpeg)

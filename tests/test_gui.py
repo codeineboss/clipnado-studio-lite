@@ -363,7 +363,9 @@ def test_mixed_export_uses_individual_layouts_and_saves_choices(app, window, med
     assert window.table.rowCount() == 1 and window.export_clips.rowCount() == 3
     window.export_clips.cellWidget(1, 3).setCurrentIndex(1)
     window.export_clips.cellWidget(2, 3).setCurrentIndex(2)
-    assert [c.export_layout for c in clips] == [None, 'blur_center', 'tt_fill']
+    window.gaming_camera = [.75,0,.25,1/3]
+    window.gaming_game = [0,1/3,1,2/3]
+    assert [c.export_layout for c in clips] == [None, 'blur_center', 'gaming_split']
     window.aspect.setCurrentText('1:1')
     window.resolution.setCurrentText('720')
     window.export_folder.setText(str(tmp_path/'mixed'))
@@ -376,15 +378,14 @@ def test_mixed_export_uses_individual_layouts_and_saves_choices(app, window, med
     assert max(pixels[0][-720*100*3:]) <= 5  # reserved animation zone
     assert pixels[1][-3] > 180 and pixels[2][-3] > 180  # both modes fill the lower canvas
     assert 'Экспорт завершён: 3' in window.status.text()
-    assert window.tiktok_tracking.isChecked() and window.tiktok_tracking.isEnabled()
-    window.tiktok_tracking.setChecked(False)
+    assert window.gaming_button.isEnabled()
     path=tmp_path/'individual-layouts.json'
     monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *_: (str(path), ''))
     window.save(); wait_task(app, window)
     window.load_project_path(path); wait_task(app, window)
-    assert not window.tiktok_tracking.isChecked()
-    assert window.project.export.tiktok_tracking == 'center'
-    assert [c.export_layout for c in window.project.candidates] == [None,'blur_center','tt_fill']
+    assert window.gaming_camera == [.75,0,.25,1/3]
+    assert window.project.export.gaming_game == [0,1/3,1,2/3]
+    assert [c.export_layout for c in window.project.candidates] == [None,'blur_center','gaming_split']
     assert [window.export_clips.cellWidget(i,3).currentIndex() for i in range(3)] == [0,1,2]
     # Common defaults change inherited rows; explicit clip choices remain stable.
     window.export_layout.setCurrentIndex(2)
@@ -402,7 +403,7 @@ def test_export_choices_follow_clip_identity_across_selection_and_sort(app, wind
     window.project.candidates=[a,b];window.visible_count=2;window.refresh_candidates()
     window.export_clips.cellWidget(0,3).setCurrentIndex(2)
     window.sort.setCurrentText('По рейтингу')
-    assert a.export_layout=='tt_fill' and b.export_layout is None
+    assert a.export_layout=='gaming_split' and b.export_layout is None
     window.table.item(1,0).setCheckState(Qt.Unchecked)
     assert window.export_clips.rowCount()==1
     assert window.export_clips.item(0,0).data(Qt.UserRole)==b.id
@@ -432,8 +433,9 @@ def test_export_framing_preview_uses_chosen_clip_and_mode(app, window, media):
     from clipnado.models import Candidate
     from clipnado.preview import VideoPreview
     window.media_loaded(media)
-    window.project.candidates=[Candidate(media.source_file_id,0,1000,80,'Юмор','Кадр',selected=True,export_layout='tt_fill')]
+    window.project.candidates=[Candidate(media.source_file_id,0,1000,80,'Юмор','Кадр',selected=True,export_layout='gaming_split')]
     window.refresh_candidates()
+    window.gaming_camera = [.75,0,.25,.3]
     window.preview_export_clip();wait_task(app,window)
     dialog=window.export_preview_dialog
     assert dialog and dialog.isVisible()
@@ -458,4 +460,62 @@ def test_boundary_undo_preserves_later_export_choice(app, window, media):
     window.undo_boundaries()
     clip=window.project.candidates[0]
     assert (clip.start_ms,clip.end_ms)==(anchor.start_ms,anchor.end_ms)
-    assert clip.export_layout=='tt_fill'
+    assert clip.export_layout=='gaming_split'
+
+
+def test_gaming_region_editor_drag_apply_save_and_cancel(app,window,gaming_source,tools,tmp_path,monkeypatch):
+    from PySide6.QtCore import QPoint
+    from clipnado.gaming import GamingRegionsDialog
+    from clipnado.media import probe
+    from clipnado.projects import load_project
+    from clipnado.models import Candidate
+    window.media_loaded(probe(gaming_source,tools))
+    window.project.candidates=[Candidate(window.project.media.source_file_id,1000,4000,80,'Реакция','Игра',selected=True,export_layout='gaming_split')]
+    window.refresh_candidates();assert window.gaming_button.isEnabled()
+    assert not hasattr(window,'tiktok_tracking')
+    seen=[]
+    timer=QTimer()
+    def edit():
+        dialog=window.findChild(GamingRegionsDialog)
+        if dialog is None or dialog.worker is not None or dialog.canvas.image.isNull():return
+        canvas=dialog.canvas;r=canvas.image_rect()
+        def point(x,y):return QPoint(round(r.x()+r.width()*x),round(r.y()+r.height()*y))
+        # Draw an entirely new camera away from the default corner. Coordinates
+        # must account for the letterboxing of the original image in the widget.
+        QTest.mousePress(canvas,Qt.LeftButton,pos=point(.15,.2))
+        QTest.mouseMove(canvas,point(.4,.5),20)
+        QTest.mouseRelease(canvas,Qt.LeftButton,pos=point(.4,.5))
+        assert canvas.camera==pytest.approx([.15,.2,.25,.3],abs=.005)
+        dialog.fraction.setValue(35)
+        seen.append(dialog.regions());timer.stop();dialog.accept()
+    timer.timeout.connect(edit);timer.start(30)
+    window.configure_gaming();app.processEvents()
+    assert seen and window.gaming_camera==seen[0][0]
+    assert window.project.export.gaming_fraction==.35
+    path=tmp_path/'gaming.json'
+    monkeypatch.setattr(QFileDialog,'getSaveFileName',lambda *_:(str(path),''))
+    window.save();wait_task(app,window)
+    saved=load_project(path);assert saved.export.gaming_camera==window.gaming_camera
+    before=window.export_settings()
+    def cancel():
+        dialog=window.findChild(GamingRegionsDialog)
+        if dialog is not None and not dialog.closed:
+            dialog.canvas.camera=[0,0,.2,.2];timer.stop();dialog.reject()
+    timer.timeout.disconnect();timer.timeout.connect(cancel);timer.start(30)
+    window.configure_gaming();app.processEvents()
+    assert window.export_settings()==before
+    # A new source has independent camera coordinates, never the previous stream's.
+    window.media_loaded(window.project.media)
+    assert window.gaming_camera is None
+
+
+def test_gaming_mixed_queue_requires_regions_before_any_export(app,window,media,tmp_path):
+    from clipnado.models import Candidate
+    window.media_loaded(media)
+    window.project.candidates=[Candidate(media.source_file_id,0,1000,80,'','',selected=True,export_layout='blur_center'),
+                               Candidate(media.source_file_id,4000,5000,80,'','',selected=True,export_layout='gaming_split')]
+    window.refresh_candidates();window.export_folder.setText(str(tmp_path/'no-partial-exports'))
+    window.export_selected()
+    assert window.task_thread is None and window.errors and 'Камера и игра' in str(window.errors[0])
+    assert not list((tmp_path/'no-partial-exports').glob('*.mp4'))
+    window.errors.clear()

@@ -37,12 +37,24 @@ def load_project(path: Path) -> Project:
         search = dict(data.get("search", {}))
         # An old project may intentionally show fewer than ten candidates.
         search.setdefault("target_count", min(10, search.get("count", 15)))
+        export = dict(data.get("export", {}))
+        export.pop("tiktok_tracking", None)
+        migrated = export.get("layout") == "tt_fill"
+        if migrated:export["layout"] = "gaming_split"
+        for group in ("candidates", "query_results"):
+            for item in data.get(group, []):
+                if item.get("export_layout") == "tt_fill":
+                    item["export_layout"] = "gaming_split"
+                    migrated = True
+        warnings = list(data.get("warnings", []))
+        if migrated:
+            warnings.append("Полный кадр TikTok заменён игровой нарезкой. Перед экспортом задайте области камеры и игры.")
         project = Project(media=MediaInfo(**data["media"]),
                           segments=[Segment(**s) for s in data.get("segments", [])],
                           candidates=[Candidate(**c) for c in data.get("candidates", [])],
                           search=SearchSettings(**search),
-                          export=ExportSettings(**data.get("export", {})),
-                          schema_version=data["schema_version"], warnings=data.get("warnings", []),
+                          export=ExportSettings(**export),
+                          schema_version=data["schema_version"], warnings=warnings,
                           audio_energy=data.get("audio_energy", []), analysis_info=data.get("analysis_info", {}),
                           query_results=[Candidate(**c) for c in data.get("query_results", [])],
                           last_query=data.get("last_query", ""), query_info=data.get("query_info", {}))

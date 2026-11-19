@@ -9,7 +9,7 @@ from uuid import uuid4
 EXPORT_LAYOUTS = {
     "top_black": "Видео сверху · тёмная зона",
     "blur_center": "Видео по центру · размытый фон",
-    "tt_fill": "TikTok · на весь кадр 9:16",
+    "gaming_split": "Игровая нарезка · стример сверху, игра снизу",
 }
 
 
@@ -32,6 +32,18 @@ def normalized_energy(points, duration_ms: int) -> list[list[float]]:
             raise ValueError("Некорректные аудиопризнаки проекта")
         result.append([at, float(level)])
     return result
+
+
+def crop_region(value, name="область"):
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise ValueError(f"Некорректная {name}: нужны x, y, ширина и высота")
+    if not all(type(v) in (int, float) and math.isfinite(v) for v in value):
+        raise ValueError(f"Некорректная {name}")
+    x, y, w, h = map(float, value)
+    if not (0 <= x < 1 and 0 <= y < 1 and .01 <= w <= 1 and .01 <= h <= 1
+            and x + w <= 1 + 1e-9 and y + h <= 1 + 1e-9):
+        raise ValueError(f"{name.capitalize()} выходит за границы исходного кадра")
+    return [x, y, w, h]
 
 
 @dataclass
@@ -135,13 +147,15 @@ class ExportSettings:
     aspect: str = "9:16"
     resolution: int = 1080
     fps: int = 30
-    quality: int = 20
+    quality: int = 18
     top_fraction: float = 0.4
     video_y: float = 0.0
     subtitles: str = "off"
     subtitle_y: float = 0.31
     layout: str = "top_black"
-    tiktok_tracking: str = "speaker"
+    gaming_camera: list[float] | None = None
+    gaming_game: list[float] = field(default_factory=lambda: [0., 0., 1., 1.])
+    gaming_fraction: float = .4
 
     def validate(self) -> None:
         for name in ("resolution", "fps", "quality"):
@@ -154,8 +168,11 @@ class ExportSettings:
             raise ValueError("Неверная частота кадров или качество")
         if not isinstance(self.layout, str) or self.layout not in EXPORT_LAYOUTS:
             raise ValueError("Неизвестное оформление видео")
-        if self.tiktok_tracking not in ("speaker", "center"):
-            raise ValueError("Неизвестный режим автокадра TikTok")
+        if self.gaming_camera is not None:
+            self.gaming_camera = crop_region(self.gaming_camera, "область камеры")
+        self.gaming_game = crop_region(self.gaming_game, "область игры")
+        if type(self.gaming_fraction) not in (int, float) or not math.isfinite(self.gaming_fraction) or not .25 <= self.gaming_fraction <= .6:
+            raise ValueError("Высота камеры должна быть от 25 до 60%")
         if self.layout == "top_black" and (not 0.2 <= self.top_fraction <= 1 or not 0 <= self.video_y <= 1 - self.top_fraction + 1e-9):
             raise ValueError("Верхняя зона выходит за холст")
         if self.subtitles not in ("off", "srt", "burn") or not 0 <= self.subtitle_y <= 1:
@@ -163,10 +180,15 @@ class ExportSettings:
         if self.layout == "top_black" and self.subtitles == "burn" and not self.video_y <= self.subtitle_y < self.video_y + self.top_fraction:
             raise ValueError("Субтитры должны находиться в зоне видео")
 
+    def require_gaming_regions(self):
+        self.validate()
+        if self.layout == "gaming_split" and self.gaming_camera is None:
+            raise ValueError("Для игровой нарезки нажмите «Камера и игра…» и один раз выделите области на исходном видео.")
+
     def dimensions(self) -> tuple[int, int]:
         return {"9:16": (self.resolution, self.resolution * 16 // 9),
                 "16:9": (self.resolution * 16 // 9, self.resolution),
-                "1:1": (self.resolution, self.resolution)}["9:16" if self.layout == "tt_fill" else self.aspect]
+                "1:1": (self.resolution, self.resolution)}["9:16" if self.layout == "gaming_split" else self.aspect]
 
 
 @dataclass

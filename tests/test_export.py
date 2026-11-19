@@ -151,67 +151,6 @@ def test_blur_keeps_center_sharp_and_smooths_background(tools, tmp_path):
     assert contrast(640)>contrast(100)*4, "Foreground lost sharpness or background was not blurred"
 
 
-@pytest.mark.parametrize('width,height,sar', [(320, 180, 1), (180, 320, 1), (240, 240, 1), (320, 180, 2)])
-def test_tiktok_fill_crops_center_without_stretching_or_borders(tools, tmp_path, width, height, sar):
-    path = tmp_path / 'кадр для TikTok.mp4'
-    pattern = (f'color=c=lime:s={width}x{height}:r=25:d=1,'
-               'drawbox=x=0:y=0:w=iw/5:h=ih:color=red:t=fill,'
-               'drawbox=x=iw*4/5:y=0:w=iw/5:h=ih:color=blue:t=fill,'
-               'drawbox=x=iw/2-15:y=ih/2-15:w=30:h=30:color=white:t=fill,'
-               f'setsar={sar}')
-    subprocess.run([tools.ffmpeg, '-v', 'error', '-f', 'lavfi', '-i', pattern,
-                    '-c:v', 'libx264', '-threads', '2', '-pix_fmt', 'yuv420p', str(path)], check=True)
-    media = probe(path, tools)
-    # TikTok is always vertical, including in a queue whose other clips are square.
-    settings = ExportSettings(aspect='1:1', resolution=720, layout='tt_fill')
-    output = export_clip(media, Candidate(media.source_file_id, 0, 1000, 80, 'Юмор', 'Тест'), [], settings,
-                         tmp_path, tools, Cancellation(), lambda *_: None)
-    info = probe(output, tools)
-    assert (info.width, info.height) == (720, 1280)
-    pixels = frame(output, tools, .2)
-    def rgb(x, y):
-        i = (y * 720 + x) * 3
-        return pixels[i:i+3]
-    for x, y in ((5, 5), (715, 5), (5, 1275), (715, 1275)):
-        assert max(rgb(x, y)) > 150, 'Unexpected added black border'
-    xs = [x for x in range(720) if min(rgb(x, 640)) > 200]
-    ys = [y for y in range(1280) if min(rgb(360, y)) > 200]
-    assert xs and ys and abs(len(xs) / len(ys) - sar) < .1, 'Source display proportions were stretched'
-    if width >= height:
-        for x in (5, 715):
-            assert rgb(x, 100)[1] > 180, 'Center crop included an unrelated side panel'
-    else:
-        assert rgb(5, 100)[0] > 180 and rgb(715, 100)[2] > 180
-
-
-@pytest.mark.parametrize('subs', ['off', 'srt', 'burn'])
-def test_tiktok_keeps_audio_timing_and_subtitles(media, tools, tmp_path, subs):
-    from clipnado.export import composition_frame
-    from PySide6.QtGui import QImage
-    candidate = Candidate(media.source_file_id, 1000, 4000, 80, 'Юмор', 'Момент', export_layout='tt_fill')
-    settings = ExportSettings(aspect='16:9', resolution=720, subtitles=subs, subtitle_y=.8, layout='blur_center')
-    out = export_clip(media, candidate, [Segment(500, 5000, 'Качественный клип для TikTok')], settings,
-                      tmp_path, tools, Cancellation(), lambda *_: None)
-    info = probe(out, tools)
-    assert (info.width, info.height, round(info.fps), info.has_audio) == (720, 1280, 30, True)
-    pixels = frame(out, tools, .2)
-    assert pixels[1] < 30 and pixels[-2] < 30
-    whites = sum(min(r, g, b) > 180 for r, g, b in zip(pixels[::3], pixels[1::3], pixels[2::3]))
-    assert whites > 100 if subs == 'burn' else whites == 0
-    if subs == 'srt':
-        text = from_srt(out.with_suffix('.srt').read_text(encoding='utf-8-sig'), 3000)
-        assert text[0].start_ms == 0 and text[0].end_ms == 3000
-    raw = subprocess.check_output([tools.ffmpeg, '-v', 'error', '-i', str(out), '-vn', '-ac', '1', '-ar', '8000', '-f', 's16le', '-'])
-    first = next(i for i, x in enumerate(array.array('h', raw)) if abs(x) > 1000) / 8000
-    assert .9 < first < 1.1
-    assert frame(out, tools, .7)[1] < 30 and frame(out, tools, 1.2)[1] > 200
-    # The export preview uses the same crop geometry, at a reduced display size.
-    image = QImage.fromData(composition_frame(media, candidate, settings, tools, Cancellation()))
-    assert (image.width(), image.height()) == (360, 640)
-    assert image.pixelColor(10, 10).green() > 200  # source flash at start+1 second
-    assert settings.layout == 'blur_center' and settings.aspect == '16:9'
-
-
 @pytest.mark.parametrize('layout', ['unknown-layout', [], 5])
 def test_invalid_individual_layout_is_rejected(media, layout):
     candidate=Candidate(media.source_file_id,0,1000,80,'Юмор','Момент',export_layout=layout)
@@ -241,7 +180,7 @@ def test_composition_preview_handles_short_clip_at_source_end(tools, tmp_path, f
     subprocess.run([tools.ffmpeg,'-v','error','-f','lavfi','-i',f'color=c=red:s=320x180:r={fps}:d=1',
                     '-c:v','libx264','-threads','2','-pix_fmt','yuv420p',str(source)],check=True)
     media=probe(source,tools)
-    candidate=Candidate(media.source_file_id,0,1000,80,'Юмор','Короткий клип',export_layout='tt_fill')
-    image=QImage.fromData(composition_frame(media,candidate,ExportSettings(resolution=720),tools,Cancellation()))
+    candidate=Candidate(media.source_file_id,0,1000,80,'Юмор','Короткий клип',export_layout='gaming_split')
+    image=QImage.fromData(composition_frame(media,candidate,ExportSettings(resolution=720,gaming_camera=[.75,0,.25,.3]),tools,Cancellation()))
     assert (image.width(),image.height())==(360,640)
     assert image.pixelColor(10,10).red()>180

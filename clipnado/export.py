@@ -9,7 +9,6 @@ from pathlib import Path
 from .media import Tools, require_space
 from .models import Candidate, ExportSettings, MediaInfo, Segment
 from .process import Cancellation, Progress, run
-from .reframe import prepare_plan, crop_commands
 from .subtitles import clip_segments, to_ass, to_srt
 
 
@@ -20,15 +19,22 @@ def clip_export_settings(settings: ExportSettings, candidate: Candidate) -> Expo
     return effective
 
 
-def video_filter(settings: ExportSettings, position=(.5, .5), commands=False) -> str:
-    settings.validate()
+def video_filter(settings: ExportSettings) -> str:
+    settings.require_gaming_regions()
     width, height = settings.dimensions()
-    if settings.layout == "tt_fill":
-        x, y = position
-        crop = ("sendcmd=f=reframe.cmd," if commands else "") + f"crop@focus={width}:{height}:(iw-ow)*{x:.6f}:(ih-oh)*{y:.6f}"
-        return (f"fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,"
-                f"scale={width}:{height}:force_original_aspect_ratio=increase:force_divisible_by=2:flags=lanczos,"
-                f"{crop},setsar=1,format=yuv420p")
+    if settings.layout == "gaming_split":
+        top = int(height * settings.gaming_fraction) // 2 * 2
+        bottom = height - top
+        def crop(rect):
+            x, y, w, h = rect
+            return (f"crop=w='max(2,trunc(iw*{w:.9f}/2)*2)':h='max(2,trunc(ih*{h:.9f}/2)*2)':"
+                    f"x='trunc(iw*{x:.9f}/2)*2':y='trunc(ih*{y:.9f}/2)*2'")
+        return (f"fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,split=2[camsrc][gamesrc];"
+                f"[camsrc]{crop(settings.gaming_camera)},scale={width}:{top}:force_original_aspect_ratio=increase:force_divisible_by=2:flags=lanczos,"
+                f"crop={width}:{top},setsar=1[cam];"
+                f"[gamesrc]{crop(settings.gaming_game)},scale={width}:{bottom}:force_original_aspect_ratio=increase:force_divisible_by=2:flags=lanczos,"
+                f"crop={width}:{bottom},setsar=1[game];"
+                "[cam][game]vstack=inputs=2,setsar=1,format=yuv420p")
     if settings.layout == "blur_center":
         # Downscale only the background before Gaussian blur. Both branches
         # originate from the same frame/PTS; the foreground remains uncropped.
@@ -67,10 +73,10 @@ def validate_export(path: Path, tools: Tools, settings: ExportSettings, duration
 
 
 def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment], settings: ExportSettings,
-                folder: Path, tools: Tools, token: Cancellation, progress: Progress, *, cache: Path | None = None,
-                notes: list[str] | None = None) -> Path:
+                folder: Path, tools: Tools, token: Cancellation, progress: Progress) -> Path:
     candidate.validate(media)
     settings = clip_export_settings(settings, candidate)
+    settings.require_gaming_regions()
     token.check()
     subtitles = clip_segments(segments, candidate.start_ms, candidate.end_ms)
     if settings.subtitles != "off" and not subtitles:
@@ -98,14 +104,7 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
     try:
         with tempfile.TemporaryDirectory(prefix=".clipnado-", dir=folder) as tmp:
             stage = Path(tmp)
-            plan = None
-            if settings.layout == "tt_fill" and settings.tiktok_tracking == "speaker":
-                plan = prepare_plan(media, candidate, tools, cache or stage / "cache", token,
-                                    lambda value, text: progress(int(value * .45), text))
-                crop_commands(plan, stage / 'reframe.cmd')
-                if notes is not None:
-                    notes.extend(f"{candidate.start_ms / 1000:.1f}–{candidate.end_ms / 1000:.1f} с: {text}" for text in plan.warnings)
-            vf = video_filter(settings, plan.at(0) if plan else (.5, .5), commands=plan is not None)
+            vf = video_filter(settings)
             if settings.subtitles == "burn":
                 width, height = settings.dimensions()
                 (stage / "subs.ass").write_text(to_ass(subtitles, width, height, settings.subtitle_y,
@@ -118,7 +117,7 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
                     "-filter_threads", str(tools.threads), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", str(settings.quality), "-threads", str(tools.threads),
                     "-c:a", "aac", "-b:a", "192k", "-af", "aresample=async=1:first_pts=0", "-movflags", "+faststart",
                     "-map_metadata", "-1", "-progress", "pipe:1", str(stage / "clip.mp4")]
-            run(args, token, cwd=stage, progress=(lambda value, text: progress(45 + int(value * .54), text)) if plan else progress, duration_ms=duration)
+            run(args, token, cwd=stage, progress=progress, duration_ms=duration)
             progress(99, "Проверка MP4…")
             validate_export(stage / "clip.mp4", tools, settings, duration, media.has_audio, token)
             token.check()
@@ -140,25 +139,19 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
 
 
 def composition_frame(media: MediaInfo, candidate: Candidate, settings: ExportSettings,
-                      tools: Tools, token: Cancellation, *, cache: Path | None = None,
-                      progress: Progress = lambda *_: None, notes: list[str] | None = None) -> bytes:
+                      tools: Tools, token: Cancellation) -> bytes:
     """Render the same composition as export; captions are intentionally omitted."""
     candidate.validate(media)
     settings = clip_export_settings(settings, candidate)
     at = min(candidate.start_ms + 1000, (candidate.start_ms + candidate.end_ms) // 2)
     with tempfile.TemporaryDirectory(prefix="clipnado-composition-") as tmp:
         path = Path(tmp) / "frame.png"
-        plan = None
-        if settings.layout == "tt_fill" and settings.tiktok_tracking == "speaker":
-            plan = prepare_plan(media, candidate, tools, cache or Path(tmp) / 'cache', token, progress)
-            if notes is not None:notes.extend(plan.warnings)
         # Accurate seek can land after the final encoded frame of a short or
         # low-FPS input. Try the preceding visible frame instead of failing on
         # a missing PNG at EOF.
         previous = max(0, at - max(100, 1000 / media.fps if media.fps else 1000))
         for position in (at, previous):
-            offset = max(0, position - candidate.start_ms)
-            vf = video_filter(settings, plan.at(offset) if plan else (.5, .5)) + ",scale=360:640:force_original_aspect_ratio=decrease"
+            vf = video_filter(settings) + ",scale=360:640:force_original_aspect_ratio=decrease"
             run([tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{position / 1000:.3f}",
                  "-i", media.path, "-an", "-sn", "-dn", "-map", "0:v:0", "-frames:v", "1",
                  "-filter_threads", str(tools.threads), "-vf", vf, "-threads", str(tools.threads), str(path)], token, timeout=60)
