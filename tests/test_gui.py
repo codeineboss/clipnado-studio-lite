@@ -519,3 +519,33 @@ def test_gaming_mixed_queue_requires_regions_before_any_export(app,window,media,
     assert window.task_thread is None and window.errors and 'Камера и игра' in str(window.errors[0])
     assert not list((tmp_path/'no-partial-exports').glob('*.mp4'))
     window.errors.clear()
+
+
+def test_comfort_controls_preview_export_and_project_roundtrip(app, window, media, tmp_path, monkeypatch):
+    from clipnado.models import Candidate
+    from clipnado.projects import load_project, save_project
+    from clipnado.preview import VideoPreview
+    window.media_loaded(media)
+    c=Candidate(media.source_file_id,1000,4000,80,'Юмор','Комфортный клип',selected=True)
+    window.project.candidates=[c]
+    window.project.segments=[Segment(0,8000,'Крупные субтитры на русском языке без потери слов и смысла.')]
+    window.refresh_candidates()
+    window.resolution.setCurrentText('720');window.color_mode.setCurrentIndex(1)
+    window.normalize_audio.setChecked(True);window.readable_subtitles.setChecked(True)
+    window.background_dim.setValue(35);window.animation_mode.setCurrentIndex(3)  # waves
+    window.subtitle_mode.setCurrentIndex(2)
+    window.preview_export_clip();assert not window.comfort_group.isEnabled()
+    wait_task(app,window)
+    assert window.export_preview_dialog and c.animation_plan['scene']=='waves'
+    image=window.export_preview_dialog.findChild(VideoPreview).image
+    assert image.pixelColor(180,500).value()>8
+    window.close_export_preview()
+    window.export_folder.setText(str(tmp_path/'output'))
+    window.export_selected();wait_task(app,window,60)
+    assert not window.errors and len(list((tmp_path/'output').glob('*.mp4')))==1
+    assert 'Проверенные файлы' in window.queue.toPlainText()
+    path=tmp_path/'project.json';save_project(window.project,path)
+    project=load_project(path);window.project=project;window.load_ui()
+    assert window.color_mode.currentIndex()==1 and window.normalize_audio.isChecked()
+    assert window.background_dim.value()==35 and window.animation_mode.currentIndex()==3
+    assert project.candidates[0].animation_plan['key']==c.animation_plan['key']

@@ -9,7 +9,9 @@ from pathlib import Path
 from .media import Tools, require_space
 from .models import Candidate, ExportSettings, MediaInfo, Segment
 from .process import Cancellation, Progress, run
-from .subtitles import clip_segments, to_ass, to_srt
+from .subtitles import clip_segments, readable_segments, to_ass, to_srt
+from .comfort import audio_filter, color_filter
+from .animations import animation_region, enabled, render_frame, render_loop, selected_plan
 
 
 def clip_export_settings(settings: ExportSettings, candidate: Candidate) -> ExportSettings:
@@ -29,7 +31,7 @@ def video_filter(settings: ExportSettings) -> str:
             x, y, w, h = rect
             return (f"crop=w='max(2,trunc(iw*{w:.9f}/2)*2)':h='max(2,trunc(ih*{h:.9f}/2)*2)':"
                     f"x='trunc(iw*{x:.9f}/2)*2':y='trunc(ih*{y:.9f}/2)*2'")
-        return (f"fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,split=2[camsrc][gamesrc];"
+        return (f"{color_filter(settings)}fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,split=2[camsrc][gamesrc];"
                 f"[camsrc]{crop(settings.gaming_camera)},scale={width}:{top}:force_original_aspect_ratio=increase:force_divisible_by=2:flags=lanczos,"
                 f"crop={width}:{top},setsar=1[cam];"
                 f"[gamesrc]{crop(settings.gaming_game)},scale={width}:{bottom}:force_original_aspect_ratio=increase:force_divisible_by=2:flags=lanczos,"
@@ -39,14 +41,14 @@ def video_filter(settings: ExportSettings) -> str:
         # Downscale only the background before Gaussian blur. Both branches
         # originate from the same frame/PTS; the foreground remains uncropped.
         bw, bh = max(2, width // 8 * 2), max(2, height // 8 * 2)
-        return (f"fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,split=2[bgsrc][fgsrc];"
+        return (f"{color_filter(settings)}fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,split=2[bgsrc][fgsrc];"
                 f"[bgsrc]scale={bw}:{bh}:force_original_aspect_ratio=increase:force_divisible_by=2,"
-                f"crop={bw}:{bh},gblur=sigma=12:steps=2,scale={width}:{height},setsar=1[bg];"
+                f"crop={bw}:{bh},gblur=sigma=12:steps=2,colorchannelmixer=rr={1-settings.background_dim:.3f}:gg={1-settings.background_dim:.3f}:bb={1-settings.background_dim:.3f},scale={width}:{height},setsar=1[bg];"
                 f"[fgsrc]scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[fg];"
                 "[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1,format=yuv420p")
     zone = int(height * settings.top_fraction) // 2 * 2
     y = int(height * settings.video_y) // 2 * 2
-    return (f"fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,"
+    return (f"{color_filter(settings)}fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,"
             f"scale={width}:{zone}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
             f"setsar=1,pad={width}:{zone}:(ow-iw)/2:(oh-ih)/2:color=black,"
             f"pad={width}:{height}:0:{y}:color=black,format=yuv420p")
@@ -73,7 +75,7 @@ def validate_export(path: Path, tools: Tools, settings: ExportSettings, duration
 
 
 def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment], settings: ExportSettings,
-                folder: Path, tools: Tools, token: Cancellation, progress: Progress) -> Path:
+                folder: Path, tools: Tools, token: Cancellation, progress: Progress, cache: Path | None = None) -> Path:
     candidate.validate(media)
     settings = clip_export_settings(settings, candidate)
     settings.require_gaming_regions()
@@ -81,6 +83,8 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
     subtitles = clip_segments(segments, candidate.start_ms, candidate.end_ms)
     if settings.subtitles != "off" and not subtitles:
         raise ValueError("В выбранном интервале нет текста для субтитров. Импортируйте SRT или выберите «Выключены».")
+    if settings.readable_subtitles:
+        subtitles = readable_segments(subtitles)
     folder = Path(folder).resolve()
     duration = candidate.end_ms - candidate.start_ms
     # Conservative high-quality H.264 estimate; FFmpeg's actual disk errors are also surfaced.
@@ -105,17 +109,31 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
         with tempfile.TemporaryDirectory(prefix=".clipnado-", dir=folder) as tmp:
             stage = Path(tmp)
             vf = video_filter(settings)
+            animation = None
+            if enabled(settings):
+                if cache is None:
+                    from .settings import data_root
+                    cache = data_root() / "cache"
+                animation = render_loop(selected_plan(candidate, settings.animation), settings, cache, tools, token, progress)
+                _, _, y = animation_region(settings)
+                vf += f"[base];[1:v]setpts=PTS-STARTPTS[anim];[base][anim]overlay=0:{y}:shortest=1"
             if settings.subtitles == "burn":
                 width, height = settings.dimensions()
                 (stage / "subs.ass").write_text(to_ass(subtitles, width, height, settings.subtitle_y,
                                                         settings.video_y if settings.layout == "top_black" else 0,
-                                                        settings.top_fraction if settings.layout == "top_black" else 1), encoding="utf-8-sig")
+                                                        settings.top_fraction if settings.layout == "top_black" else 1, settings.readable_subtitles), encoding="utf-8-sig")
                 # Relative ASCII filter paths work with Windows drives, Cyrillic folders and apostrophes.
                 vf += ",ass=filename=subs.ass"
+            af = audio_filter(media, candidate, settings, tools, token, progress)
             args = [tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{candidate.start_ms / 1000:.3f}",
-                    "-i", media.path, "-t", f"{duration / 1000:.3f}", "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
-                    "-filter_threads", str(tools.threads), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", str(settings.quality), "-threads", str(tools.threads),
-                    "-c:a", "aac", "-b:a", "192k", "-af", "aresample=async=1:first_pts=0", "-movflags", "+faststart",
+                    "-i", media.path]
+            if animation:
+                args += ["-stream_loop", "-1", "-i", str(animation)]
+                args += ["-filter_complex_threads", str(tools.threads), "-filter_complex", vf + "[out]", "-map", "[out]"]
+            else:
+                args += ["-filter_threads", str(tools.threads), "-vf", vf, "-map", "0:v:0"]
+            args += ["-t", f"{duration / 1000:.3f}", "-map", "0:a:0?", "-sn", "-dn", "-c:v", "libx264", "-preset", "veryfast", "-crf", str(settings.quality), "-threads", str(tools.threads),
+                    "-c:a", "aac", "-b:a", "192k", "-af", af, "-movflags", "+faststart",
                     "-map_metadata", "-1", "-progress", "pipe:1", str(stage / "clip.mp4")]
             run(args, token, cwd=stage, progress=progress, duration_ms=duration)
             progress(99, "Проверка MP4…")
@@ -139,8 +157,8 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
 
 
 def composition_frame(media: MediaInfo, candidate: Candidate, settings: ExportSettings,
-                      tools: Tools, token: Cancellation) -> bytes:
-    """Render the same composition as export; captions are intentionally omitted."""
+                      tools: Tools, token: Cancellation, segments: list[Segment] | None = None) -> bytes:
+    """Render the export geometry, animation and optional burned captions."""
     candidate.validate(media)
     settings = clip_export_settings(settings, candidate)
     at = min(candidate.start_ms + 1000, (candidate.start_ms + candidate.end_ms) // 2)
@@ -151,10 +169,30 @@ def composition_frame(media: MediaInfo, candidate: Candidate, settings: ExportSe
         # a missing PNG at EOF.
         previous = max(0, at - max(100, 1000 / media.fps if media.fps else 1000))
         for position in (at, previous):
-            vf = video_filter(settings) + ",scale=360:640:force_original_aspect_ratio=decrease"
-            run([tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{position / 1000:.3f}",
-                 "-i", media.path, "-an", "-sn", "-dn", "-map", "0:v:0", "-frames:v", "1",
-                 "-filter_threads", str(tools.threads), "-vf", vf, "-threads", str(tools.threads), str(path)], token, timeout=60)
+            vf = video_filter(settings)
+            args = [tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{position / 1000:.3f}", "-i", media.path]
+            if enabled(settings):
+                width, height, y = animation_region(settings)
+                image = render_frame(selected_plan(candidate, settings.animation), width, height, max(0, position-candidate.start_ms)/1000)
+                if not image.save(str(Path(tmp) / "animation.png")):
+                    raise OSError("Не удалось сохранить кадр анимации")
+                args += ["-loop", "1", "-i", str(Path(tmp) / "animation.png")]
+                vf += f"[base];[base][1:v]overlay=0:{y}:shortest=1"
+            if settings.subtitles == "burn" and segments is not None:
+                captions = clip_segments(segments, candidate.start_ms, candidate.end_ms)
+                if settings.readable_subtitles:
+                    captions = readable_segments(captions)
+                width, height = settings.dimensions()
+                (Path(tmp) / "subs.ass").write_text(to_ass(captions, width, height, settings.subtitle_y,
+                    settings.video_y if settings.layout == "top_black" else 0,
+                    settings.top_fraction if settings.layout == "top_black" else 1, settings.readable_subtitles), encoding="utf-8-sig")
+                vf += f",setpts=PTS+{max(0, position-candidate.start_ms)/1000:.3f}/TB,ass=filename=subs.ass,setpts=PTS-STARTPTS"
+            vf += ",scale=360:640:force_original_aspect_ratio=decrease"
+            if enabled(settings):
+                args += ["-filter_complex_threads", str(tools.threads), "-filter_complex", vf + "[out]", "-map", "[out]"]
+            else:
+                args += ["-filter_threads", str(tools.threads), "-vf", vf, "-map", "0:v:0"]
+            run(args + ["-an", "-sn", "-dn", "-frames:v", "1", "-threads", str(tools.threads), str(path)], token, cwd=Path(tmp), timeout=60)
             if path.is_file():
                 return path.read_bytes()
         raise ValueError("В этом месте видео нет доступного кадра для предпросмотра.")

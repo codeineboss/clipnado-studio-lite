@@ -29,6 +29,7 @@ from . import __version__
 from .analysis import recognize
 from .export import clip_export_settings, composition_frame, export_clip
 from .gaming import GamingRegionsDialog
+from .animations import SCENES, enabled as animation_enabled, prepare_animations
 from .media import Tools, probe, thumbnail
 from .models import EXPORT_LAYOUTS, Candidate, ExportSettings, Project, SearchSettings, Segment, parse_time, timecode
 from .process import Cancellation, Cancelled, run
@@ -284,7 +285,7 @@ class MainWindow(QMainWindow):
         self.mutating = [self.open_button, self.save_button, self.settings_button, self.import_button, self.relink_button,
                          self.analyze_button, self.tools_button, sidebar, self.candidate_actions, self.table,
                          self.transcript_controls, self.transcript, self.export_group, self.export_button, self.more_button,
-                         self.export_clips, self.export_clip_controls]
+                         self.export_clips, self.export_clip_controls, self.comfort_group]
         for shortcut, callback in (("Ctrl+O", self.open_project), ("Ctrl+S", self.save)):
             action = QAction(self)
             action.setShortcut(shortcut)
@@ -417,6 +418,23 @@ class MainWindow(QMainWindow):
         folder_layout.addWidget(button("Выбрать…", self.choose_output))
         form.addRow("Папка результата", folder_row)
         layout.addWidget(group)
+        comfort = QGroupBox("Изображение, звук и нижняя зона")
+        self.comfort_group = comfort
+        comfort_form = QFormLayout(comfort)
+        self.color_mode = combo(["Исходные цвета", "Мягкая коррекция", "Немного светлее"])
+        self.normalize_audio = QCheckBox("Выравнивать громкость отрывка (цель −16 LUFS)")
+        self.readable_subtitles = QCheckBox("Крупнее, не более двух коротких строк")
+        self.readable_subtitles.setChecked(True)
+        self.background_dim = spin(0, 60, 25)
+        self.animation_mode = combo(["Выключена", "Разные сцены автоматически", "Qwen · подобрать по содержанию", *SCENES.values()])
+        comfort_form.addRow("Цвет", self.color_mode)
+        comfort_form.addRow("Звук", self.normalize_audio)
+        comfort_form.addRow("Субтитры", self.readable_subtitles)
+        comfort_form.addRow("Затемнение размытого фона, %", self.background_dim)
+        comfort_form.addRow("Анимация под верхним видео", self.animation_mode)
+        comfort_form.addRow(note("Пропорции сохраняются. Светлые и тёмные исходники лучше оценивать по предпросмотру. Выравнивается весь звук, включая игру; речь отдельно не выделяется. Короткие карточки субтитров используют примерное время внутри реплики."))
+        comfort_form.addRow(note("Анимации работают только под верхним видео, без своего звука. Qwen выбирает из семи локальных сцен; это занимает дополнительное время. Подготовленные ролики кэшируются. В других форматах анимация не добавляется."))
+        layout.addWidget(comfort)
         self.export_notice = QLabel()
         self.export_notice.setWordWrap(True)
         self.export_notice.setObjectName("notice")
@@ -448,10 +466,12 @@ class MainWindow(QMainWindow):
         layout.insertWidget(2, self.export_clips, 2)
         self.export_layout.currentIndexChanged.connect(self.export_layout_changed)
         self.export_layout_changed()
-        for widget in (self.aspect, self.resolution, self.fps, self.quality, self.subtitle_mode):
+        for widget in (self.aspect, self.resolution, self.fps, self.quality, self.subtitle_mode, self.color_mode, self.animation_mode):
             widget.currentIndexChanged.connect(self.close_export_preview)
-        for widget in (self.top, self.video_y, self.subtitle_y):
+        for widget in (self.top, self.video_y, self.subtitle_y, self.background_dim):
             widget.valueChanged.connect(self.close_export_preview)
+        self.normalize_audio.toggled.connect(self.close_export_preview)
+        self.readable_subtitles.toggled.connect(self.close_export_preview)
         row = QHBoxLayout()
         self.export_button = button("Экспортировать отмеченные", self.export_selected, True)
         row.addWidget(self.export_button)
@@ -481,7 +501,7 @@ class MainWindow(QMainWindow):
             "blur_center": "Видео целиком по центру, фон — его синхронная увеличенная размытая копия.",
             "gaming_split": "Игровая нарезка: стример сверху, игра снизу. Обе области берутся из одного отрывка и остаются синхронными; результат 9:16 без растяжения.",
         }
-        self.export_notice.setText("Общее оформление: " + notices[code] + " В таблице можно выбрать свой вариант для каждого клипа. Области камеры и игры общие для выбранного видео. Для высокого качества выберите 1080p, CRF 18 и FPS исходника. Разрешение, FPS, качество и субтитры — общие. Исходный звук сохраняется.")
+        self.export_notice.setText("Общее оформление: " + notices[code] + " В таблице можно выбрать свой вариант для каждого клипа. Области камеры и игры общие для выбранного видео. Для высокого качества выберите 1080p, CRF 18 и FPS исходника. Разрешение, FPS, качество и субтитры — общие. Обработка изображения и звука включается отдельно ниже.")
         self.refresh_export_clips()
 
     def refresh_export_clips(self):
@@ -567,7 +587,12 @@ class MainWindow(QMainWindow):
             media, candidate, tools = copy.deepcopy(self.project.media), copy.deepcopy(candidate), copy.copy(self.tools)
             self.close_export_preview()
             settings.require_gaming_regions()
-            def completed(data):
+            segments, cache = copy.deepcopy(self.project.segments), self.cache
+            def completed(result):
+                data, warnings = result
+                self.publish_animation_plans([candidate])
+                if warnings:
+                    self.queue.setPlainText("\n".join(warnings))
                 image = QImage.fromData(data)
                 if image.isNull():
                     self.show_error("Не удалось прочитать кадр оформления.")
@@ -576,7 +601,7 @@ class MainWindow(QMainWindow):
                 dialog.setAttribute(Qt.WA_DeleteOnClose)
                 dialog.setWindowTitle("Предпросмотр оформления")
                 layout = QVBoxLayout(dialog)
-                heading = note(f"{timecode(candidate.start_ms)}–{timecode(candidate.end_ms)} · {EXPORT_LAYOUTS[settings.layout]}\nОдин кадр выбранного клипа, без субтитров. Положение камеры и игры совпадает с экспортом; качество MP4 задаётся в настройках.")
+                heading = note(f"{timecode(candidate.start_ms)}–{timecode(candidate.end_ms)} · {EXPORT_LAYOUTS[settings.layout]}\nОдин кадр с выбранным оформлением, обработкой цвета и встроенными субтитрами. Анимация показана в этот момент времени; звук проверяется в готовом MP4.")
                 layout.addWidget(heading)
                 preview = VideoPreview()
                 preview.set_image(image)
@@ -586,7 +611,10 @@ class MainWindow(QMainWindow):
                 self.export_preview_dialog = dialog
                 dialog.destroyed.connect(lambda: setattr(self, "export_preview_dialog", None) if self.export_preview_dialog is dialog else None)
                 dialog.show()
-            self.start_task(lambda token, progress: composition_frame(media, candidate, settings, tools, token), completed)
+            def execute(token, progress):
+                warnings = prepare_animations([candidate], settings, tools, cache, token, progress)
+                return composition_frame(media, candidate, settings, tools, token, segments), warnings
+            self.start_task(execute, completed)
         except ValueError as exc:
             self.show_error(exc)
 
@@ -773,6 +801,11 @@ class MainWindow(QMainWindow):
         self.video_y.setValue(round(p.export.video_y * 100))
         self.subtitle_y.setValue(round(p.export.subtitle_y * 100))
         self.subtitle_mode.setCurrentIndex(["off", "srt", "burn"].index(p.export.subtitles))
+        self.color_mode.setCurrentIndex(["off", "soft", "bright"].index(p.export.color))
+        self.normalize_audio.setChecked(p.export.normalize_audio)
+        self.readable_subtitles.setChecked(p.export.readable_subtitles)
+        self.background_dim.setValue(round(p.export.background_dim * 100))
+        self.animation_mode.setCurrentIndex(["off", "varied", "qwen", *SCENES].index(p.export.animation))
         url = QUrl.fromLocalFile(m.path)
         self.preview_end = None
         if self.player.source() != url:
@@ -797,7 +830,11 @@ class MainWindow(QMainWindow):
                                 [18, 20, 25][self.quality.currentIndex()], self.top.value() / 100, self.video_y.value() / 100,
                                 ["off", "srt", "burn"][self.subtitle_mode.currentIndex()], self.subtitle_y.value() / 100,
                                 list(EXPORT_LAYOUTS)[self.export_layout.currentIndex()],
-                                copy.deepcopy(self.gaming_camera), list(self.gaming_game), self.gaming_fraction)
+                                copy.deepcopy(self.gaming_camera), list(self.gaming_game), self.gaming_fraction,
+                                color=["off", "soft", "bright"][self.color_mode.currentIndex()],
+                                normalize_audio=self.normalize_audio.isChecked(), readable_subtitles=self.readable_subtitles.isChecked(),
+                                background_dim=self.background_dim.value()/100,
+                                animation=["off", "varied", "qwen", *SCENES][self.animation_mode.currentIndex()])
         result.validate()
         return result
 
@@ -1260,26 +1297,44 @@ class MainWindow(QMainWindow):
             self.project.export = settings
             self.changed()
             self.persist_settings()
-            project, tools, output = copy.deepcopy(self.project), copy.copy(self.tools), self.output
+            project, tools, output, cache = copy.deepcopy(self.project), copy.copy(self.tools), self.output, self.cache
             self.queue.clear()
             for i, (c, effective) in enumerate(plan, 1):
                 width, height = effective.dimensions()
                 self.queue.append(f"{i}. {timecode(c.start_ms)} → {timecode(c.end_ms)} · {EXPORT_LAYOUTS[effective.layout]} · {width}×{height} — в очереди")
             def execute(token, progress):
                 results = []
+                warnings = prepare_animations([c for c, _ in plan], settings, tools, cache, token, progress)
                 for index, (c, effective) in enumerate(plan):
                     token.check()
                     path = export_clip(project.media, c, project.segments, effective, output, tools, token,
-                                       lambda value, text: progress(int((index + value / 100) / len(selected) * 100), f"{index + 1}/{len(selected)} · {text}"))
+                                       lambda value, text: progress(int((index + value / 100) / len(selected) * 100), f"{index + 1}/{len(selected)} · {text}"), cache=cache)
                     results.append(str(path))
                     progress(int((index + 1) / len(selected) * 100), "Готов: " + str(path))
-                return results
+                return dict(paths=results, clips=[c for c, _ in plan], warnings=warnings)
             self.start_task(execute, self.exports_ready)
         except (ValueError, OSError) as exc:
             self.show_error(exc)
 
+    def publish_animation_plans(self, clips):
+        if not self.project:
+            return
+        changed = False
+        by_id = {c.id: c for c in clips}
+        for c in self.project.candidates:
+            other = by_id.get(c.id)
+            if other and (c.start_ms, c.end_ms) == (other.start_ms, other.end_ms) and other.animation_plan != c.animation_plan:
+                c.animation_plan = copy.deepcopy(other.animation_plan)
+                changed = True
+        if changed:
+            self.changed()
+
     def exports_ready(self, paths):
-        self.queue.setPlainText("Проверенные файлы:\n" + "\n".join(paths))
+        warnings = []
+        if isinstance(paths, dict):
+            self.publish_animation_plans(paths["clips"])
+            warnings, paths = paths["warnings"], paths["paths"]
+        self.queue.setPlainText("Проверенные файлы:\n" + "\n".join(paths) + ("\n\n" + "\n".join(warnings) if warnings else ""))
         self.status.setText(f"Экспорт завершён: {len(paths)} файлов. MP4 проверены декодированием.")
         self.progress.setValue(100)
 

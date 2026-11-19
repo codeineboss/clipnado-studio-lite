@@ -115,7 +115,7 @@ def test_anamorphic_aspect_is_preserved(tools, tmp_path):
 
 @pytest.mark.parametrize("aspect,subs", [("9:16", "off"), ("1:1", "burn"), ("16:9", "srt")])
 def test_blurred_center_export_geometry_background_and_subtitles(media, tools, tmp_path, aspect, subs):
-    settings = ExportSettings(aspect=aspect, resolution=720, layout="blur_center", subtitles=subs, subtitle_y=.7)
+    settings = ExportSettings(aspect=aspect, resolution=720, layout="blur_center", subtitles=subs, subtitle_y=.7, background_dim=0)
     c = Candidate(media.source_file_id, 1000, 4000, 80, "История", "Тест")
     out = export_clip(media, c, [Segment(500, 5000, "Кириллические субтитры по центру.")], settings,
                       tmp_path / "Размытый фон ' тест", tools, Cancellation(), lambda *_: None)

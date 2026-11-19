@@ -38,6 +38,9 @@ def load_project(path: Path) -> Project:
         # An old project may intentionally show fewer than ten candidates.
         search.setdefault("target_count", min(10, search.get("count", 15)))
         export = dict(data.get("export", {}))
+        # Old saved projects keep their original appearance.
+        export.setdefault("readable_subtitles", False)
+        export.setdefault("background_dim", 0.)
         export.pop("tiktok_tracking", None)
         migrated = export.get("layout") == "tt_fill"
         if migrated:export["layout"] = "gaming_split"

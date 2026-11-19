@@ -156,13 +156,13 @@ def transcript_windows(segments: list[Segment], settings: SearchSettings):
     return result
 
 
-def response_json(output: str):
+def response_json(output: str, field: str = "clips"):
     decoder = json.JSONDecoder()
-    for match in reversed(list(re.finditer(r'\{\s*"clips"\s*:', output))):
+    for match in reversed(list(re.finditer(r'\{\s*"' + re.escape(field) + r'"\s*:', output))):
         try:
             value, _ = decoder.raw_decode(output[match.start():])
-            if isinstance(value.get("clips"), list):
-                return value["clips"]
+            if isinstance(value.get(field), list):
+                return value[field]
         except (ValueError, TypeError):
             continue
     raise ValueError("Qwen не вернула завершённый JSON. Проверенный текст сохранён; повторите поиск или уменьшите размер контекста.")
@@ -274,10 +274,12 @@ class LocalRequest:
     schema: dict
     proposals: list[ClipProposal]
     output_tokens: int
+    response_field: str = "clips"
+    retry_hint: str = RETRY_HINT
 
     @property
     def prompt_limit(self):
-        return CONTEXT_TOKENS - self.output_tokens - RETRY_RESERVE
+        return CONTEXT_TOKENS - self.output_tokens - (len(self.retry_hint.encode("utf-8")) + 68)
 
 
 def build_request(media, segments, settings, left, right, window_count, proposal_cap=80, *, proposals_override=None, instruction="", limit_override=None):
@@ -423,11 +425,11 @@ class LocalModelProvider:
                         raise
                 outputs.append(output[-16000:])
                 try:
-                    return decode(response_json(output)), count, outputs, None
+                    return decode(response_json(output, request.response_field)), count, outputs, None
                 except ValueError as exc:
                     error = str(exc)
                     if attempt == 0:
-                        (work / "prompt.txt").write_text(request.prompt + RETRY_HINT, encoding="utf-8")
+                        (work / "prompt.txt").write_text(request.prompt + request.retry_hint, encoding="utf-8")
                         args[args.index("--seed") + 1] = "43"
             return None, count, outputs, error
 
