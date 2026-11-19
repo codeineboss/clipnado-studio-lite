@@ -1,0 +1,17 @@
+{
+  "tested_commit": "c913d75432832edd23a68de3c6493c302614a9e7",
+  "package_commit": "93542c01ef3aba22aa600c008b1b79b28f546f6b",
+  "source_changes_since_test": [
+    ".github/workflows/deliver-windows.yml"
+  ],
+  "suite_url": "https://github.com/Dan1elCarter67/clipnado-studio-lite/actions/runs/43869981174",
+  "windows_tests_passed": 165,
+  "windows_skips": 0,
+  "suite_seconds": 4220.76,
+  "camera_preflight_tests_passed": 51,
+  "camera_preflight_seconds": 17.12,
+  "evidence": "Downloaded GitHub job log: 165 passed in 4220.76s (1:10:20). Full regression step success; portable smoke cancelled by 75-minute job limit.",
+  "portable_smoke_completed": false,
+  "publication_verified": false,
+  "delivery_blocker": "GitHub API HTTP 403: Sorry. Your account was suspended; repeated package run 43882056467 cannot be inspected."
+}

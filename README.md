@@ -1,5 +1,7 @@
 # Clipnado Studio Lite 0.1.9
 
+**Статус переноса:** проект подготовлен для нового приватного репозитория `codeineboss/clipnado-studio-lite`. Сохранены все 32 коммита и четыре ветки из резервной копии. Репозиторий ещё требуется создать на GitHub: подключение не имеет разрешения `createRepository`. Код приложения ранее прошёл 165 тестов Windows; финальная проверка переносимого пакета и публикация нового выпуска пока не подтверждены. Ссылки на скачивание ниже относятся к будущей публикации в новом репозитории. Подробности прежних проверок — в [QA_REPORT.md](QA_REPORT.md).
+
 Локальная Windows-программа для отбора эпизодов и экспорта заготовок для CapCut. **Whisper base распознаёт речь, Qwen3-4B-Instruct-2507 выбирает эпизоды по смыслу.** API, регистрация, ключи и онлайн-анализ удалены. После скачивания файлов сеть не нужна. Код приложения написан самостоятельно, код Supoclip не включён.
 
 Добавлено в 0.1.9: **локальный автокадр по говорящему** для TikTok 9:16. Он следит за лицом и переключается между собеседниками. YuNet находит лица, Light-ASD оценивает речь по звуку и движению рта. Оба небольших файла моделей включены в ZIP; PyTorch и API не нужны.
@@ -29,11 +31,11 @@
 
 ## Скачать и открыть
 
-1. Скачайте и полностью распакуйте [программу Windows x64](https://github.com/Dan1elCarter67/clipnado-studio-lite/releases/download/preview-0.1.9/ClipnadoStudioLite-Windows-x64.zip).
-2. Скачайте [модель Qwen GGUF — 2,08 ГБ](https://github.com/Dan1elCarter67/clipnado-studio-lite/releases/download/preview-0.1.9/Qwen_Qwen3-4B-Instruct-2507-Q3_K_M.gguf). Положите этот файл без переименования в папку `models` распакованной программы. Также можно выбрать его кнопкой «Указать модель Qwen (.gguf)».
+1. Скачайте и полностью распакуйте [программу Windows x64](https://github.com/codeineboss/clipnado-studio-lite/releases/download/preview-0.1.9/ClipnadoStudioLite-Windows-x64.zip).
+2. Скачайте [модель Qwen GGUF — 2,08 ГБ](https://github.com/codeineboss/clipnado-studio-lite/releases/download/preview-0.1.9/Qwen_Qwen3-4B-Instruct-2507-Q3_K_M.gguf). Положите этот файл без переименования в папку `models` распакованной программы. Также можно выбрать его кнопкой «Указать модель Qwen (.gguf)».
 3. Запустите `ClipnadoStudioLite.exe` или `start.cmd`. Python, FFmpeg, Whisper base и CPU/Vulkan-движки включены. При проблеме запуска откройте `diagnostics.cmd`; журнал — `%LOCALAPPDATA%/ClipnadoStudioLite/startup-error.log`.
 
-[Все файлы выпуска](https://github.com/Dan1elCarter67/clipnado-studio-lite/releases/tag/preview-0.1.9). Для закрытого репозитория войдите в GitHub под аккаунтом с доступом. Сборка 0.1.9 проходит полный набор проверок, включая настоящие Whisper/Qwen, модели автокадра и готовый переносимый пакет; фактические результаты будут указаны в [QA_REPORT.md](QA_REPORT.md).
+[Все файлы выпуска](https://github.com/codeineboss/clipnado-studio-lite/releases/tag/preview-0.1.9). Для закрытого репозитория войдите в GitHub под аккаунтом с доступом. Сборка 0.1.9 проходит полный набор проверок, включая настоящие Whisper/Qwen, модели автокадра и готовый переносимый пакет; фактические результаты будут указаны в [QA_REPORT.md](QA_REPORT.md).
 
 Нужны Windows 10/11 x64, CPU с AVX и 32 ГБ RAM для целевого ПК; комплектные движки собраны без AVX2/BMI2/FMA/F16C/AVX512 для Xeon E5-2670. При наличии Vulkan-драйвера программа автоматически использует GPU, затем освобождает память перед следующим этапом. При ошибке GPU повторяет этап через CPU. В настройках можно принудительно выбрать CPU. На GTX 1660 с 6 ГБ VRAM Qwen квантизации Q3_K_M рассчитана на размещение на видеокарте; физическая проверка этого оборудования ещё не проведена. CUDA Toolkit не требуется.
 
