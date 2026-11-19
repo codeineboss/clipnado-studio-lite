@@ -35,13 +35,18 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force assets,tools | Out-Null
-          Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-essentials_build.zip -OutFile assets/ffmpeg-windows.zip
+          # Official publisher's GitHub mirror; identical pinned bytes, with a website fallback.
+          curl.exe --fail --location --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 600 --output assets/ffmpeg-windows.zip https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip
+          if ($LASTEXITCODE -ne 0) {
+            curl.exe --fail --location --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 600 --output assets/ffmpeg-windows.zip https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-essentials_build.zip
+            if ($LASTEXITCODE -ne 0) { throw 'Both official FFmpeg download sources failed' }
+          }
           if ((Get-FileHash assets/ffmpeg-windows.zip -Algorithm SHA256).Hash.ToLower() -ne 'db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec') { throw 'FFmpeg checksum mismatch' }
           python -m zipfile -e assets/ffmpeg-windows.zip assets/ffmpeg
           Get-ChildItem assets/ffmpeg -Filter ffmpeg.exe -Recurse | Select-Object -First 1 | Copy-Item -Destination tools/ffmpeg.exe
           Get-ChildItem assets/ffmpeg -Filter ffprobe.exe -Recurse | Select-Object -First 1 | Copy-Item -Destination tools/ffprobe.exe
           (Resolve-Path tools).Path | Out-File -FilePath $env:GITHUB_PATH -Append
-          Invoke-WebRequest https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip -OutFile assets/python-windows.zip
+          Invoke-WebRequest https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip -OutFile assets/python-windows.zip -MaximumRetryCount 3 -RetryIntervalSec 5
       - name: Restore native local engines
         id: engines
         uses: actions/cache/restore@v4
