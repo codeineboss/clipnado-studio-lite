@@ -36,7 +36,7 @@ Qwen выбирает только сцену, цветовую палитру �
 ## Скачать и открыть
 
 <!-- WINDOWS_VALIDATION_START -->
-Выпуск 0.1.11 готовится; фактическая Windows-проверка будет записана после успешного полного набора и запуска переносимого пакета.
+**Windows: 187 тестов прошли без пропусков.** [Полный набор](https://github.com/codeineboss/clipnado-studio-lite/actions/runs/44634445388), [готовый пакет](https://github.com/codeineboss/clipnado-studio-lite/actions/runs/44634445388). Настоящие Whisper/Qwen, игровой MP4, выбор областей и встроенный Python проверены. Подробности: [QA_REPORT.md](QA_REPORT.md).
 <!-- WINDOWS_VALIDATION_END -->
 
 1. Полностью распакуйте [Windows x64 ZIP](https://github.com/codeineboss/clipnado-studio-lite/releases/download/preview-0.1.11/ClipnadoStudioLite-Windows-x64.zip).
