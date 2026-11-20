@@ -219,8 +219,8 @@ class MainWindow(QMainWindow):
         self.count = spin(1, 100, 15)
         self.target_count = spin(1, 100, 10)
         self.min_score = spin(0, 100, 60)
-        self.minimum = spin(1, 600, 10)
-        self.maximum = spin(1, 600, 40)
+        self.minimum = spin(30, 90, 30)
+        self.minimum.setToolTip("Автоматический поиск: клипы не короче 30 секунд")
         self.sensitivity = spin(0, 100, 55)
         self.search_profile = QComboBox()
         self.search_profile.addItem("Свои настройки", "custom")
@@ -244,9 +244,8 @@ class MainWindow(QMainWindow):
         durations_row = QHBoxLayout(durations)
         durations_row.setContentsMargins(0, 0, 0, 0)
         durations_row.addWidget(self.minimum)
-        durations_row.addWidget(QLabel("—"))
-        durations_row.addWidget(self.maximum)
-        form.addRow("Длина, секунд", durations)
+        durations_row.addWidget(QLabel("Максимум 90 с"))
+        form.addRow("Минимум, секунд", durations)
         self.categories = []
         for label in ("История", "Юмор", "Реакция", "Неожиданность"):
             check = QCheckBox(label)
@@ -790,7 +789,7 @@ class MainWindow(QMainWindow):
             self.start_task(lambda token, progress: probe(Path(path), self.tools, token), self.media_loaded)
 
     def media_loaded(self, media):
-        self.project = Project(media, search=search_profile(SearchSettings(), "memes"))
+        self.project = Project(media, search=search_profile(SearchSettings(min_seconds=30, max_seconds=90), "memes"))
         self.boundary_undo.clear()
         self.close_assistant_dialog()
         self.project_path = None
@@ -807,8 +806,9 @@ class MainWindow(QMainWindow):
         self.count.setValue(p.search.count)
         self.target_count.setValue(p.search.target_count)
         self.min_score.setValue(p.search.min_score)
+        p.search.min_seconds = min(90, max(30, p.search.min_seconds))
+        p.search.max_seconds = 90
         self.minimum.setValue(p.search.min_seconds)
-        self.maximum.setValue(p.search.max_seconds)
         self.sensitivity.setValue(p.search.sensitivity)
         self.content_query.setText(p.last_query)
         self.close_assistant_dialog()
@@ -819,7 +819,7 @@ class MainWindow(QMainWindow):
         self._profile_update = True
         try:
             self.search_profile.setCurrentIndex(self.search_profile.findData(p.search.profile))
-            self.profile_hint.setText(SEARCH_PROFILES[p.search.profile].description if p.search.profile != "custom" else "Собственные длительности и общий смысловой отбор. Рейтинг — внутренняя оценка, не прогноз просмотров.")
+            self.profile_hint.setText(SEARCH_PROFILES[p.search.profile].description if p.search.profile != "custom" else "Общий диапазон 30–90 секунд и смысловой отбор. Рейтинг — внутренняя оценка, не прогноз просмотров.")
         finally:
             self._profile_update = previous
         self.load_export_ui(p.export)
@@ -866,11 +866,9 @@ class MainWindow(QMainWindow):
             return
         code = self.search_profile.currentData()
         if code == "custom":
-            self.profile_hint.setText("Собственные длительности и общий смысловой отбор. Рейтинг — внутренняя оценка, не прогноз просмотров.")
+            self.profile_hint.setText("Общий диапазон 30–90 секунд и смысловой отбор. Рейтинг — внутренняя оценка, не прогноз просмотров.")
         else:
             profile = SEARCH_PROFILES[code]
-            self.minimum.setValue(profile.minimum)
-            self.maximum.setValue(profile.maximum)
             self.profile_hint.setText(profile.description)
         if self.project:
             try:
@@ -911,7 +909,7 @@ class MainWindow(QMainWindow):
                             (" Субтитры выключены: расшифровки пока нет." if not self.project.segments else ""))
 
     def search_settings(self):
-        result = SearchSettings(self.count.value(), self.minimum.value(), self.maximum.value(), self.sensitivity.value(),
+        result = SearchSettings(self.count.value(), self.minimum.value(), 90, self.sensitivity.value(),
                                 [c.text() for c in self.categories if c.isChecked()],
                                 target_count=self.target_count.value(), min_score=self.min_score.value(), profile=self.search_profile.currentData())
         result.validate()

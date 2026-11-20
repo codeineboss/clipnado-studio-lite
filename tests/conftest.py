@@ -36,3 +36,11 @@ def media(source, tools):
 def gaming_source(tmp_path_factory, tools):
     from scripts.gaming_smoke import make_fixture
     return make_fixture(tmp_path_factory.mktemp('игровой стрим') / "камера и игра ' тест.mp4", tools.ffmpeg)
+
+
+@pytest.fixture(scope='session')
+def long_media(source, tools, tmp_path_factory):
+    from clipnado.media import probe
+    path=tmp_path_factory.mktemp('long-source')/'60-seconds.mp4'
+    subprocess.run([tools.ffmpeg,'-v','error','-y','-stream_loop','-1','-i',str(source),'-t','60','-c','copy',str(path)],check=True)
+    return probe(path,tools)

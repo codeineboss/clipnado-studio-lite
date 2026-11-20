@@ -32,11 +32,7 @@ def test_search_profiles_preserve_goals_and_offer_context(code):
     before = SearchSettings(count=25, target_count=12, min_score=65, query="шутка")
     result = search_profile(before, code)
     p = SEARCH_PROFILES[code]
-    assert (result.min_seconds, result.max_seconds, result.profile) == (
-        p.minimum,
-        p.maximum,
-        code,
-    )
+    assert (result.min_seconds, result.max_seconds, result.profile) == (60, 90, code)
     assert (result.count, result.target_count, result.min_score, result.query) == (
         25,
         12,
@@ -53,7 +49,7 @@ def test_search_profiles_preserve_goals_and_offer_context(code):
     assert p.instruction in request.system
     assert request.proposals
     assert all(
-        p.minimum * 1000 <= x.end_ms - x.start_ms <= p.maximum * 1000
+        result.min_seconds * 1000 <= x.end_ms - x.start_ms <= 90000
         for x in request.proposals
     )
     assert "Это поиск по содержанию" in request.system
@@ -144,7 +140,7 @@ def test_profile_cache_is_separate_and_reused(tmp_path, monkeypatch):
 
     monkeypatch.setattr(LocalModelProvider, "_window", window)
     provider = LocalModelProvider(tools)
-    settings = search_profile(SearchSettings(), "quote")
+    settings = search_profile(SearchSettings(min_seconds=30, max_seconds=90), "quote")
     provider.analyze(
         media, segments, settings, tmp_path / "cache", Cancellation(), lambda *_: None
     )
@@ -168,7 +164,7 @@ def test_profile_cache_is_separate_and_reused(tmp_path, monkeypatch):
     or not os.environ.get("CLIPNADO_TEST_QWEN"),
     reason="Set actual local Qwen paths",
 )
-def test_actual_qwen_short_meme_profile_and_cache(tmp_path, monkeypatch):
+def test_actual_qwen_meme_profile_minimum_30_seconds_and_cache(tmp_path, monkeypatch):
     tools = Tools(
         llama=os.environ["CLIPNADO_TEST_LLAMA"],
         semantic_model=os.environ["CLIPNADO_TEST_QWEN"],
@@ -176,37 +172,69 @@ def test_actual_qwen_short_meme_profile_and_cache(tmp_path, monkeypatch):
         acceleration="cpu",
     )
     dialogue = [
-        (0, 4000, "Всем привет, подождём остальных зрителей."),
-        (4000, 7000, "Я сейчас с первого раза перепрыгну эту яму, учитесь у мастера!"),
-        (7000, 10000, "Смотрите, разбегаюсь и прыгаю!"),
-        (10000, 13000, "Ой! Я опять упал в ту же яму!"),
-        (13000, 17000, "Ты хотя бы разбег взял в другую сторону!"),
-        (17000, 21000, "Ахаха, ладно, больше не буду учить вас прыгать."),
+        (0, 6000, "Всем привет, подождём остальных зрителей, я пока включу игру."),
         (
-            21000,
-            26000,
-            "А теперь реклама магазина. Ссылка в описании, скидка по промокоду.",
+            6000,
+            12000,
+            "Я сейчас покажу самый безопасный способ пройти эту яму. С первого раза, учитесь у мастера!",
         ),
-        (26000, 32000, "Подождите минуту, пока настраиваю микрофон."),
+        (
+            12000,
+            18000,
+            "До края нужно идти медленно. Я здесь всё изучил, тут вообще невозможно упасть.",
+        ),
+        (
+            18000,
+            24000,
+            "Главное не нажать прыжок слишком рано. В прошлый раз я просто торопился, а сейчас всё рассчитал.",
+        ),
+        (
+            24000,
+            30000,
+            "Теперь смотрите: разбегаюсь, прыгаю, перелетаю... Ой, почему я лечу вниз?!",
+        ),
+        (
+            30000,
+            36000,
+            "Я опять упал в самое начало! Полчаса вас учил, а сам не смог перепрыгнуть одну яму!",
+        ),
+        (
+            36000,
+            42000,
+            "Спасибо, мастер. Теперь мы точно знаем, как делать не надо. Показывай ещё один безопасный способ!",
+        ),
+        (
+            42000,
+            48000,
+            "Ахаха, ладно, больше не буду учить вас прыгать. Давайте лучше вы меня научите.",
+        ),
+        (
+            48000,
+            60000,
+            "А теперь реклама магазина. Ссылка в описании, скидка по промокоду. Сейчас расскажу про товары.",
+        ),
     ]
     segments = [Segment(*row) for row in dialogue]
     media = MediaInfo(
-        "authored-meme.mp4", "actual-meme-profile", 32000, 1920, 1080, 30, True
+        "authored-meme.mp4", "actual-meme-profile-30", 60000, 1920, 1080, 30, True
     )
-    settings = search_profile(SearchSettings(count=6, target_count=1), "quote")
+    settings = search_profile(
+        SearchSettings(count=6, target_count=1, min_seconds=30, max_seconds=90),
+        "quote",
+    )
     provider = LocalModelProvider(tools)
     result = provider.analyze(
         media, segments, settings, tmp_path / "cache", Cancellation(), lambda *_: None
     )
     assert result.info["complete"] and result.candidates
     assert all(
-        8000 <= c.end_ms - c.start_ms <= 20000 and c.provider.startswith("local-qwen:")
+        30000 <= c.end_ms - c.start_ms <= 90000 and c.provider.startswith("local-qwen:")
         for c in result.candidates
     )
-    # The promise and the streamer's own spoken reaction end at 13 s.
-    # The other participant's later joke is optional, not a required boundary.
+    # The failed jump and the streamer's spoken reaction end at 36 s;
+    # later banter is optional, while greetings and advertising are excluded.
     assert any(
-        4000 <= c.start_ms <= 7000 and 13000 <= c.end_ms <= 21000
+        6000 <= c.start_ms <= 18000 and 36000 <= c.end_ms <= 48000
         for c in result.candidates
     ), [(c.start_ms, c.end_ms) for c in result.candidates]
 

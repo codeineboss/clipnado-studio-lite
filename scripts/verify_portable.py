@@ -72,7 +72,7 @@ from PySide6.QtWidgets import QApplication,QMessageBox
 from clipnado.app import MainWindow
 from clipnado.media import probe
 from clipnado.models import Candidate,Segment
-from clipnado.process import Cancellation
+from clipnado.process import Cancellation,run
 from clipnado.gaming import GamingRegionsDialog,source_frame
 from scripts.gaming_smoke import CAMERA,GAME,make_fixture
 import clipnado.local_llm as llm
@@ -120,7 +120,11 @@ def check():
         assert [(m.width,m.height) for m in infos]==[(720,720),(720,720),(720,1280)]
         assert [c.export_layout for c in w.project.candidates]==[None,'blur_center','gaming_split']
         print('PACKAGED_MIXED_GAMING_EXPORT_OK',flush=True)
-        w.project.segments=[Segment(0,1000,'Вопрос'),Segment(1000,2000,'Ответ')]
+        long_source=Path(sys.argv[1])/'long-demo.mp4'
+        run([w.tools.ffmpeg,'-v','error','-y','-stream_loop','-1','-i',str(Path('demo/demo.mp4').resolve()),'-t','60','-c','copy',str(long_source)])
+        w.media_loaded(probe(long_source,w.tools))
+        w.gaming_camera=CAMERA.copy();w.gaming_game=GAME.copy()
+        w.project.segments=[Segment(0,30000,'Вопрос'),Segment(30000,60000,'Ответ')]
         llm.run=protocol_fixture;stage[0]=2;w.analyze()
     elif stage[0]==2 and w.task_thread is None:
         assert w.project.analysis_info['network_used'] is False
@@ -135,7 +139,7 @@ def check():
         w.table.selectRow(0);stage[0]=4;w.refine_selected()
     elif stage[0]==4 and w.task_thread is None:
         assert w.assistant_dialog and len(w.project.candidates)==1
-        assert (w.project.candidates[0].start_ms,w.project.candidates[0].end_ms)==(0,2000)
+        assert (w.project.candidates[0].start_ms,w.project.candidates[0].end_ms)==(0,30000)
         w.close_assistant_dialog();print('PACKAGED_BOUNDARY_REVIEW_PROTOCOL_OK',flush=True)
         w.select_all(True);w.export_clips.cellWidget(0,3).setCurrentIndex(2)
         stage[0]=5;w.preview_export_clip()
@@ -193,7 +197,7 @@ def check():
         w.close_export_preview()
         identities=[c.id for c in w.project.candidates]
         w.search_profile.setCurrentIndex(w.search_profile.findData('quote'))
-        assert (w.minimum.value(),w.maximum.value())==(8,20) and w.project.search.profile=='quote'
+        assert w.minimum.value()==30 and w.search_settings().max_seconds==90 and w.project.search.profile=='quote'
         assert [c.id for c in w.project.candidates]==identities
         w.export_preset.setCurrentIndex(w.export_preset.findData('dialogue'));w.apply_export_preset()
         assert w.project.candidates[0].export_layout=='top_black'

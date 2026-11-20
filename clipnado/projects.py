@@ -67,6 +67,13 @@ def load_project(path: Path) -> Project:
                           query_results=[candidate_from_dict(c) for c in data.get("query_results", [])],
                           last_query=data.get("last_query", ""), query_info=data.get("query_info", {}))
         project.validate()
+        if project.search.min_seconds < 30:
+            project.search.min_seconds = 30
+            if project.search.max_seconds is not None:
+                project.search.max_seconds = max(30, project.search.max_seconds)
+            warning = "Минимальная длина автоматического поиска поднята до 30 секунд. Существующие клипы сохранены."
+            if warning not in project.warnings:
+                project.warnings.append(warning)
         return project
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("Повреждённый или несовместимый файл проекта: " + str(exc)) from exc

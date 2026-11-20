@@ -80,7 +80,6 @@ def test_gui_manual_export_edit_and_save(app, window, media, tmp_path, monkeypat
     assert len(list((tmp_path / "results").glob("*.mp4"))) == 2
     path = tmp_path / "saved.json"
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_: (str(path), ""))
-    window.maximum.setValue(4)
     window.save()
     wait_task(app, window)
     assert path.exists() and not window.dirty
@@ -122,12 +121,12 @@ def test_many_consecutive_background_tasks_release_threads(app, window):
     assert results == list(range(40))
 
 
-def test_local_only_ui_and_analysis_work_without_network(app, window, media, tmp_path, monkeypatch):
+def test_local_only_ui_and_analysis_work_without_network(app, window, long_media, tmp_path, monkeypatch):
+    media=long_media
     import socket
     from PySide6.QtWidgets import QLineEdit, QComboBox
     window.media_loaded(media)
     window.minimum.setValue(1)
-    window.maximum.setValue(8)
     assert not hasattr(window, "key") and not hasattr(window, "provider")
     assert not any("Gemini" in c.currentText() or "Groq" in c.currentText() for c in window.findChildren(QComboBox))
     model = tmp_path / "model.gguf"
@@ -137,7 +136,7 @@ def test_local_only_ui_and_analysis_work_without_network(app, window, media, tmp
     window.tools.llama = sys.executable
     window.tools.acceleration = "cpu"
     monkeypatch.setattr("clipnado.local_llm.prompt_tokens", lambda *_a, **_k: 1000)
-    segments = [Segment(0, 1000, "Вопрос ученика."), Segment(1000, 3000, "Необычный ответ учителя."), Segment(3000, 5000, "Ответная реплика.")]
+    segments = [Segment(0, 15000, "Вопрос ученика."), Segment(15000, 35000, "Необычный ответ учителя."), Segment(35000, 55000, "Ответная реплика.")]
     monkeypatch.setattr("clipnado.app.recognize", lambda *_a, **_k: (segments, [], []))
     def forbidden(*_a, **_kw):
         pytest.fail("Local UI analysis attempted a network connection")
@@ -149,6 +148,8 @@ def test_local_only_ui_and_analysis_work_without_network(app, window, media, tmp
     wait_task(app, window)
     assert window.project.candidates and window.project.analysis_info["network_used"] is False
     assert window.project.analysis_info["mode"] == "local-qwen"
+    assert all(c.end_ms-c.start_ms>=30000 for c in window.project.candidates)
+    assert window.search_settings().max_seconds == 90
 
 
 def test_goal_controls_persist_and_analysis_reports_shortfall(app, window, media, tmp_path, monkeypatch):
@@ -230,7 +231,7 @@ def test_content_search_preserves_main_clips_and_adds_only_on_click(app, window,
     from clipnado.models import Candidate
     from clipnado.local_llm import LocalAnalysisResult
     window.media_loaded(media)
-    window.minimum.setValue(1); window.maximum.setValue(8)
+    window.minimum.setValue(30)
     window.add_manual()
     original = copy.deepcopy(window.project.candidates)
     segments = [Segment(0, 4000, "Не согласен с твоим объяснением."), Segment(4000, 8000, "Почему? Давай обсудим.")]
@@ -313,7 +314,7 @@ def test_refinement_background_task_uses_transcript_and_requires_apply(app, wind
     from clipnado.models import Candidate
     from clipnado.local_llm import LocalAnalysisResult
     window.media_loaded(media)
-    window.minimum.setValue(2); window.maximum.setValue(8); window.add_manual()
+    window.minimum.setValue(30); window.add_manual()
     window.table.selectRow(0)
     original = copy.deepcopy(window.project.candidates[0])
     window.project.segments = [Segment(0, 8000, "Уже исправленный текст")]
@@ -556,21 +557,25 @@ def test_search_profiles_new_defaults_change_without_analysis_and_restore_legacy
     from clipnado.projects import load_project,save_project
     window.media_loaded(media)
     assert window.search_settings().profile=='memes'
-    assert (window.minimum.value(),window.maximum.value())==(10,40)
+    assert window.minimum.value()==30 and window.search_settings().max_seconds == 90
     c=Candidate(media.source_file_id,0,3000,80,'Юмор','Существующий клип',selected=True)
     window.project.candidates=[c];window.refresh_candidates()
     window.search_profile.setCurrentIndex(window.search_profile.findData('quote'))
-    assert (window.minimum.value(),window.maximum.value())==(8,20)
+    assert window.minimum.value()==30 and window.search_settings().max_seconds == 90
     assert window.project.candidates==[c] and window.task_thread is None
     # Manual duration overrides survive roundtrip without reapplying defaults.
-    window.minimum.setValue(6);window.project.search=window.search_settings()
+    window.minimum.setValue(35);window.project.search=window.search_settings()
     path=tmp_path/'profiles.json';save_project(window.project,path)
     window.project=load_project(path);window.load_ui()
-    assert window.search_profile.currentData()=='quote' and window.minimum.value()==6
+    assert window.search_profile.currentData()=='quote' and window.minimum.value()==35
     data=window.project.to_dict();data['search'].pop('profile');data['search'].update(min_seconds=60,max_seconds=90)
     data['export'].pop('preset');path.write_text(json.dumps(data),encoding='utf-8')
     window.project=load_project(path);window.load_ui()
-    assert window.search_profile.currentData()=='custom' and (window.minimum.value(),window.maximum.value())==(60,90)
+    assert window.search_profile.currentData()=='custom' and window.minimum.value()==60 and window.search_settings().max_seconds == 90
+    data['search'].update(min_seconds=8,max_seconds=20);path.write_text(json.dumps(data),encoding='utf-8')
+    window.project=load_project(path);window.load_ui()
+    assert window.minimum.value()==30 and window.search_settings().max_seconds==90
+    assert window.project.candidates[0].id==c.id and window.task_thread is None
 
 
 def test_export_profiles_apply_preserve_individual_choices_and_roundtrip(app,window,media,tmp_path):
