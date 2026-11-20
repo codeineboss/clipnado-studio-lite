@@ -98,15 +98,11 @@ class Candidate:
     selected: bool = False
     match_score: int | None = None
     export_layout: str | None = None
-    animation_plan: dict | None = None
 
     def validate(self, media: MediaInfo) -> None:
         self.start_ms = integer(self.start_ms, "начало клипа")
         self.end_ms = integer(self.end_ms, "конец клипа")
         self.score = integer(self.score, "рейтинг")
-        if self.animation_plan is not None:
-            from .animations import validate_plan
-            validate_plan(self.animation_plan)
         if self.export_layout is not None and (not isinstance(self.export_layout, str) or self.export_layout not in EXPORT_LAYOUTS):
             raise ValueError("Неизвестное оформление клипа")
         if self.source_file_id != media.source_file_id or not 0 <= self.start_ms < self.end_ms <= media.duration_ms:
@@ -121,6 +117,13 @@ class Candidate:
             raise ValueError("Некорректное описание клипа")
 
 
+def candidate_from_dict(data: dict) -> Candidate:
+    """Read old project/cache records without the retired animation planner."""
+    values = dict(data)
+    values.pop("animation_plan", None)
+    return Candidate(**values)
+
+
 @dataclass
 class SearchSettings:
     count: int = 15
@@ -131,8 +134,12 @@ class SearchSettings:
     target_count: int = 10
     min_score: int = 60
     query: str = ""
+    profile: str = "custom"
 
     def validate(self) -> None:
+        from .profiles import SEARCH_PROFILES
+        if not isinstance(self.profile, str) or self.profile not in ("custom", *SEARCH_PROFILES):
+            raise ValueError("Неизвестный профиль поиска")
         if not isinstance(self.query, str) or len(self.query) > 500:
             raise ValueError("Поисковый запрос: не более 500 символов")
         self.query = self.query.strip()
@@ -164,16 +171,16 @@ class ExportSettings:
     normalize_audio: bool = False
     readable_subtitles: bool = True
     background_dim: float = .25
-    animation: str = "off"
+    preset: str = "custom"
 
     def validate(self) -> None:
-        from .animations import SCENES
+        from .profiles import EXPORT_PROFILES
+        if not isinstance(self.preset, str) or self.preset not in ("custom", *EXPORT_PROFILES):
+            raise ValueError("Неизвестный профиль оформления")
         if not isinstance(self.color, str) or self.color not in ("off", "soft", "bright") or type(self.normalize_audio) is not bool or type(self.readable_subtitles) is not bool:
             raise ValueError("Неверные настройки изображения, звука или текста")
         if type(self.background_dim) not in (int, float) or not math.isfinite(self.background_dim) or not 0 <= self.background_dim <= .6:
             raise ValueError("Затемнение фона: от 0 до 60%")
-        if not isinstance(self.animation, str) or self.animation not in ("off", "varied", "qwen", *SCENES):
-            raise ValueError("Неизвестная анимация")
         for name in ("resolution", "fps", "quality"):
             setattr(self, name, integer(getattr(self, name), name))
         if not all(isinstance(x, (float, int)) and math.isfinite(x) for x in (self.top_fraction, self.video_y, self.subtitle_y)):
@@ -191,8 +198,6 @@ class ExportSettings:
             raise ValueError("Высота камеры должна быть от 25 до 60%")
         if self.layout == "top_black" and (not 0.2 <= self.top_fraction <= 1 or not 0 <= self.video_y <= 1 - self.top_fraction + 1e-9):
             raise ValueError("Верхняя зона выходит за холст")
-        if self.layout == "top_black" and self.animation != "off" and self.video_y + self.top_fraction > .98:
-            raise ValueError("Для анимации оставьте свободную нижнюю зону хотя бы 2%")
         if self.subtitles not in ("off", "srt", "burn") or not 0 <= self.subtitle_y <= 1:
             raise ValueError("Неверные настройки субтитров")
         if self.layout == "top_black" and self.subtitles == "burn" and not self.video_y <= self.subtitle_y < self.video_y + self.top_fraction:

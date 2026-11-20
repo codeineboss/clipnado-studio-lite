@@ -90,7 +90,8 @@ print('PACKAGED_WINDOW_CREATE_START',flush=True)
 w=MainWindow()
 w.tools.acceleration='cpu'
 w.show_error=lambda text:(print('PACKAGED_ERROR',text,flush=True),app.exit(2))
-assert not hasattr(w,'key') and not hasattr(w,'tiktok_tracking')
+assert not Path('clipnado/animations.py').exists() and not Path('clipnado/animation_render.py').exists()
+assert not hasattr(w,'key') and not hasattr(w,'tiktok_tracking') and not hasattr(w,'animation_mode')
 assert Path(w.tools.llama_vulkan).is_file() and Path(w.tools.whisper_vulkan).is_file()
 print('PACKAGED_WINDOW_CREATED',flush=True)
 def no_network(*_a,**_kw):raise RuntimeError('Unexpected network connection')
@@ -169,9 +170,9 @@ def check():
         assert top.red()>180 and top.blue()<40 and bottom.blue()>180 and bottom.red()<40
         print('PACKAGED_GAMING_PIXELS_OK',flush=True)
         w.project.candidates[0].export_layout='top_black'
-        w.project.segments=[Segment(0,w.project.media.duration_ms,'Проверяем крупные субтитры на русском языке и плавную анимацию в нижней части.')]
+        w.project.segments=[Segment(0,w.project.media.duration_ms,'Проверяем крупные субтитры на русском языке и свободную нижнюю часть.')]
         w.refresh_candidates();w.color_mode.setCurrentIndex(1);w.normalize_audio.setChecked(True)
-        w.readable_subtitles.setChecked(True);w.subtitle_mode.setCurrentIndex(2);w.animation_mode.setCurrentIndex(3)
+        w.readable_subtitles.setChecked(True);w.subtitle_mode.setCurrentIndex(2)
         w.export_folder.setText(str(Path(sys.argv[1])/'comfort'))
         stage[0]=7;w.export_selected()
     elif stage[0]==7 and w.task_thread is None:
@@ -179,18 +180,38 @@ def check():
         info=probe(files[0],w.tools);assert (info.width,info.height,info.has_audio)==(720,1280,True)
         image=QImage.fromData(source_frame(info,400,w.tools,Cancellation()))
         values=[image.pixelColor(x,y).value() for x in range(0,image.width(),5) for y in range(image.height()//2,image.height(),5)]
-        assert max(values)>70 and sum(values)/len(values)<70
-        assert w.project.candidates[0].animation_plan['origin']=='procedural'
+        assert max(values)<=5
         from clipnado.projects import save_project,load_project
         save_project(w.project,Path(sys.argv[1])/'comfort.json')
         saved=load_project(Path(sys.argv[1])/'comfort.json')
-        assert saved.export.normalize_audio and saved.export.color=='soft' and saved.export.animation=='waves'
-        print('PACKAGED_COMFORT_ANIMATION_EXPORT_OK',flush=True)
+        assert saved.export.normalize_audio and saved.export.color=='soft'
+        print('PACKAGED_COMFORT_EXPORT_OK',flush=True)
         stage[0]=8;w.preview_export_clip()
     elif stage[0]==8 and w.task_thread is None:
         assert w.export_preview_dialog
-        print('PACKAGED_ANIMATION_CAPTION_PREVIEW_OK',flush=True)
-        w.close_export_preview();timer.stop();w.dirty=False;w.close();app.quit()
+        print('PACKAGED_CAPTION_PREVIEW_OK',flush=True)
+        w.close_export_preview()
+        identities=[c.id for c in w.project.candidates]
+        w.search_profile.setCurrentIndex(w.search_profile.findData('quote'))
+        assert (w.minimum.value(),w.maximum.value())==(8,20) and w.project.search.profile=='quote'
+        assert [c.id for c in w.project.candidates]==identities
+        w.export_preset.setCurrentIndex(w.export_preset.findData('dialogue'));w.apply_export_preset()
+        assert w.project.candidates[0].export_layout=='top_black'
+        assert w.project.export.preset=='dialogue' and w.project.export.normalize_audio
+        w.apply_layout_to_selected()
+        w.export_folder.setText(str(Path(sys.argv[1])/'profiles'))
+        stage[0]=9;w.export_selected()
+    elif stage[0]==9 and w.task_thread is None:
+        files=list((Path(sys.argv[1])/'profiles').glob('*.mp4'));assert len(files)==1
+        info=probe(files[0],w.tools);assert (info.width,info.height,round(info.fps))==(1080,1920,30)
+        from clipnado.projects import save_project,load_project
+        save_project(w.project,Path(sys.argv[1])/'profiles.json')
+        saved=load_project(Path(sys.argv[1])/'profiles.json')
+        assert saved.search.profile=='quote' and saved.export.preset=='dialogue'
+        assert saved.export.subtitles=='burn'
+        w.resolution.setCurrentText('720');assert w.export_settings().preset=='custom'
+        print('PACKAGED_MEME_PROFILES_EXPORT_OK',flush=True)
+        timer.stop();w.dirty=False;w.close();app.quit()
 def deadline():
     print('PACKAGED_GUI_DEADLINE',stage[0],w.player.position(),w.video.frame_count,w.player.errorString(),flush=True)
     if w.token:w.token.cancel()
@@ -210,8 +231,9 @@ result=app.exec();faulthandler.cancel_dump_traceback_later();sys.exit(result)
             "PACKAGED_EXPORT_PREVIEW_OK",
             "PACKAGED_GAMING_EDITOR_OK",
             "PACKAGED_GAMING_PIXELS_OK",
-            "PACKAGED_COMFORT_ANIMATION_EXPORT_OK",
-            "PACKAGED_ANIMATION_CAPTION_PREVIEW_OK",
+            "PACKAGED_COMFORT_EXPORT_OK",
+            "PACKAGED_CAPTION_PREVIEW_OK",
+            "PACKAGED_MEME_PROFILES_EXPORT_OK",
         )
         if not all(tag in output for tag in required):
             raise RuntimeError(

@@ -11,7 +11,6 @@ from .models import Candidate, ExportSettings, MediaInfo, Segment
 from .process import Cancellation, Progress, run
 from .subtitles import clip_segments, readable_segments, to_ass, to_srt
 from .comfort import audio_filter, color_filter
-from .animations import animation_region, enabled, render_frame, render_loop, selected_plan
 
 
 def clip_export_settings(settings: ExportSettings, candidate: Candidate) -> ExportSettings:
@@ -75,7 +74,7 @@ def validate_export(path: Path, tools: Tools, settings: ExportSettings, duration
 
 
 def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment], settings: ExportSettings,
-                folder: Path, tools: Tools, token: Cancellation, progress: Progress, cache: Path | None = None) -> Path:
+                folder: Path, tools: Tools, token: Cancellation, progress: Progress) -> Path:
     candidate.validate(media)
     settings = clip_export_settings(settings, candidate)
     settings.require_gaming_regions()
@@ -109,14 +108,6 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
         with tempfile.TemporaryDirectory(prefix=".clipnado-", dir=folder) as tmp:
             stage = Path(tmp)
             vf = video_filter(settings)
-            animation = None
-            if enabled(settings):
-                if cache is None:
-                    from .settings import data_root
-                    cache = data_root() / "cache"
-                animation = render_loop(selected_plan(candidate, settings.animation), settings, cache, tools, token, progress)
-                _, _, y = animation_region(settings)
-                vf += f"[base];[1:v]setpts=PTS-STARTPTS[anim];[base][anim]overlay=0:{y}:shortest=1"
             if settings.subtitles == "burn":
                 width, height = settings.dimensions()
                 (stage / "subs.ass").write_text(to_ass(subtitles, width, height, settings.subtitle_y,
@@ -127,11 +118,7 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
             af = audio_filter(media, candidate, settings, tools, token, progress)
             args = [tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{candidate.start_ms / 1000:.3f}",
                     "-i", media.path]
-            if animation:
-                args += ["-stream_loop", "-1", "-i", str(animation)]
-                args += ["-filter_complex_threads", str(tools.threads), "-filter_complex", vf + "[out]", "-map", "[out]"]
-            else:
-                args += ["-filter_threads", str(tools.threads), "-vf", vf, "-map", "0:v:0"]
+            args += ["-filter_threads", str(tools.threads), "-vf", vf, "-map", "0:v:0"]
             args += ["-t", f"{duration / 1000:.3f}", "-map", "0:a:0?", "-sn", "-dn", "-c:v", "libx264", "-preset", "veryfast", "-crf", str(settings.quality), "-threads", str(tools.threads),
                     "-c:a", "aac", "-b:a", "192k", "-af", af, "-movflags", "+faststart",
                     "-map_metadata", "-1", "-progress", "pipe:1", str(stage / "clip.mp4")]
@@ -158,7 +145,7 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
 
 def composition_frame(media: MediaInfo, candidate: Candidate, settings: ExportSettings,
                       tools: Tools, token: Cancellation, segments: list[Segment] | None = None) -> bytes:
-    """Render the export geometry, animation and optional burned captions."""
+    """Render the export geometry, color and optional burned captions."""
     candidate.validate(media)
     settings = clip_export_settings(settings, candidate)
     at = min(candidate.start_ms + 1000, (candidate.start_ms + candidate.end_ms) // 2)
@@ -171,13 +158,6 @@ def composition_frame(media: MediaInfo, candidate: Candidate, settings: ExportSe
         for position in (at, previous):
             vf = video_filter(settings)
             args = [tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{position / 1000:.3f}", "-i", media.path]
-            if enabled(settings):
-                width, height, y = animation_region(settings)
-                image = render_frame(selected_plan(candidate, settings.animation), width, height, max(0, position-candidate.start_ms)/1000)
-                if not image.save(str(Path(tmp) / "animation.png")):
-                    raise OSError("Не удалось сохранить кадр анимации")
-                args += ["-loop", "1", "-i", str(Path(tmp) / "animation.png")]
-                vf += f"[base];[base][1:v]overlay=0:{y}:shortest=1"
             if settings.subtitles == "burn" and segments is not None:
                 captions = clip_segments(segments, candidate.start_ms, candidate.end_ms)
                 if settings.readable_subtitles:
@@ -188,10 +168,7 @@ def composition_frame(media: MediaInfo, candidate: Candidate, settings: ExportSe
                     settings.top_fraction if settings.layout == "top_black" else 1, settings.readable_subtitles), encoding="utf-8-sig")
                 vf += f",setpts=PTS+{max(0, position-candidate.start_ms)/1000:.3f}/TB,ass=filename=subs.ass,setpts=PTS-STARTPTS"
             vf += ",scale=360:640:force_original_aspect_ratio=decrease"
-            if enabled(settings):
-                args += ["-filter_complex_threads", str(tools.threads), "-filter_complex", vf + "[out]", "-map", "[out]"]
-            else:
-                args += ["-filter_threads", str(tools.threads), "-vf", vf, "-map", "0:v:0"]
+            args += ["-filter_threads", str(tools.threads), "-vf", vf, "-map", "0:v:0"]
             run(args + ["-an", "-sn", "-dn", "-frames:v", "1", "-threads", str(tools.threads), str(path)], token, cwd=Path(tmp), timeout=60)
             if path.is_file():
                 return path.read_bytes()

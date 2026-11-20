@@ -143,7 +143,7 @@ def test_compatible_015_windows_are_reused_without_model_calls(tools, tmp_path, 
     segments = [Segment(i * 10000, (i + 1) * 10000, str(i)) for i in range(12)]
     media, settings, token = media_for(segments), SearchSettings(), Cancellation()
     model_id = llm.model_identity(Path(tools.semantic_model), token)
-    common = {"source": media.source_file_id, "model": model_id, "segments": [asdict(s) for s in segments], "settings": {k: v for k, v in asdict(settings).items() if k != "query"}, "version": 3}
+    common = {"source": media.source_file_id, "model": model_id, "segments": [asdict(s) for s in segments], "settings": {k: v for k, v in asdict(settings).items() if k not in ("query", "profile")}, "version": 3}
     identity = hashlib.sha256(json.dumps(common, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     folder = tmp_path / "cache" / "local-qwen" / identity
     folder.mkdir(parents=True)

@@ -29,7 +29,7 @@ from . import __version__
 from .analysis import recognize
 from .export import clip_export_settings, composition_frame, export_clip
 from .gaming import GamingRegionsDialog
-from .animations import SCENES, enabled as animation_enabled, prepare_animations
+from .profiles import SEARCH_PROFILES, EXPORT_PROFILES, search_profile, export_profile
 from .media import Tools, probe, thumbnail
 from .models import EXPORT_LAYOUTS, Candidate, ExportSettings, Project, SearchSettings, Segment, parse_time, timecode
 from .process import Cancellation, Cancelled, run
@@ -155,6 +155,8 @@ class MainWindow(QMainWindow):
         self.cache = Path(settings.get("cache") or str(data_root() / "cache"))
         self.output = Path(settings.get("output") or str(Path.home() / "Videos" / "Clipnado"))
         self.project = None
+        self._profile_update = False
+        self.applied_export_preset = "custom"
         self.assistant_dialog = None
         self.export_preview_dialog = None
         self.gaming_camera = None
@@ -217,9 +219,21 @@ class MainWindow(QMainWindow):
         self.count = spin(1, 100, 15)
         self.target_count = spin(1, 100, 10)
         self.min_score = spin(0, 100, 60)
-        self.minimum = spin(1, 600, 60)
-        self.maximum = spin(1, 600, 90)
+        self.minimum = spin(1, 600, 10)
+        self.maximum = spin(1, 600, 40)
         self.sensitivity = spin(0, 100, 55)
+        self.search_profile = QComboBox()
+        self.search_profile.addItem("Свои настройки", "custom")
+        for code, profile in SEARCH_PROFILES.items():
+            self.search_profile.addItem(profile.label, code)
+            self.search_profile.setItemData(self.search_profile.count()-1, profile.description, Qt.ToolTipRole)
+        self.search_profile.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.search_profile.setMinimumContentsLength(12)
+        self.search_profile.setCurrentIndex(1)
+        self.profile_hint = note(SEARCH_PROFILES["memes"].description)
+        form.addRow("Стиль поиска", self.search_profile)
+        form.addRow(self.profile_hint)
+        self.search_profile.currentIndexChanged.connect(self.search_profile_changed)
         form.addRow("До кандидатов", self.count)
         form.addRow("Минимум (цель)", self.target_count)
         form.addRow("Оценка от", self.min_score)
@@ -395,6 +409,17 @@ class MainWindow(QMainWindow):
         group = QGroupBox("03   Настройки экспорта")
         self.export_group = group
         form = QFormLayout(group)
+        self.export_preset = QComboBox()
+        self.export_preset.addItem("Свои настройки", "custom")
+        for code, label in EXPORT_PROFILES.items():
+            self.export_preset.addItem(label, code)
+        profile_row = QWidget()
+        profile_layout = QHBoxLayout(profile_row)
+        profile_layout.setContentsMargins(0, 0, 0, 0)
+        profile_layout.addWidget(self.export_preset, 1)
+        profile_layout.addWidget(button("Применить профиль", self.apply_export_preset))
+        form.addRow("Готовое оформление", profile_row)
+        form.addRow(note("Профили задают 1080p, высокое качество, FPS по исходнику, выравнивание звука и читаемые субтитры при наличии текста. Индивидуальные варианты клипов сохраняются. Профиль не предсказывает просмотры."))
         self.export_layout = combo(list(EXPORT_LAYOUTS.values()))
         self.gaming_summary = QLabel("Области камеры и игры ещё не выбраны")
         self.gaming_summary.setWordWrap(True)
@@ -418,7 +443,7 @@ class MainWindow(QMainWindow):
         folder_layout.addWidget(button("Выбрать…", self.choose_output))
         form.addRow("Папка результата", folder_row)
         layout.addWidget(group)
-        comfort = QGroupBox("Изображение, звук и нижняя зона")
+        comfort = QGroupBox("Изображение и звук")
         self.comfort_group = comfort
         comfort_form = QFormLayout(comfort)
         self.color_mode = combo(["Исходные цвета", "Мягкая коррекция", "Немного светлее"])
@@ -426,14 +451,11 @@ class MainWindow(QMainWindow):
         self.readable_subtitles = QCheckBox("Крупнее, не более двух коротких строк")
         self.readable_subtitles.setChecked(True)
         self.background_dim = spin(0, 60, 25)
-        self.animation_mode = combo(["Выключена", "Разные сцены автоматически", "Qwen · подобрать по содержанию", *SCENES.values()])
         comfort_form.addRow("Цвет", self.color_mode)
         comfort_form.addRow("Звук", self.normalize_audio)
         comfort_form.addRow("Субтитры", self.readable_subtitles)
         comfort_form.addRow("Затемнение размытого фона, %", self.background_dim)
-        comfort_form.addRow("Анимация под верхним видео", self.animation_mode)
         comfort_form.addRow(note("Пропорции сохраняются. Светлые и тёмные исходники лучше оценивать по предпросмотру. Выравнивается весь звук, включая игру; речь отдельно не выделяется. Короткие карточки субтитров используют примерное время внутри реплики."))
-        comfort_form.addRow(note("Анимации работают только под верхним видео, без своего звука. Qwen выбирает из семи локальных сцен; это занимает дополнительное время. Подготовленные ролики кэшируются. В других форматах анимация не добавляется."))
         layout.addWidget(comfort)
         self.export_notice = QLabel()
         self.export_notice.setWordWrap(True)
@@ -466,12 +488,19 @@ class MainWindow(QMainWindow):
         layout.insertWidget(2, self.export_clips, 2)
         self.export_layout.currentIndexChanged.connect(self.export_layout_changed)
         self.export_layout_changed()
-        for widget in (self.aspect, self.resolution, self.fps, self.quality, self.subtitle_mode, self.color_mode, self.animation_mode):
+        for widget in (self.aspect, self.resolution, self.fps, self.quality, self.subtitle_mode, self.color_mode):
             widget.currentIndexChanged.connect(self.close_export_preview)
         for widget in (self.top, self.video_y, self.subtitle_y, self.background_dim):
             widget.valueChanged.connect(self.close_export_preview)
         self.normalize_audio.toggled.connect(self.close_export_preview)
         self.readable_subtitles.toggled.connect(self.close_export_preview)
+        for widget in (self.aspect, self.resolution, self.fps, self.quality, self.subtitle_mode,
+                       self.color_mode, self.export_layout):
+            widget.currentIndexChanged.connect(self.clear_export_preset)
+        for widget in (self.top, self.video_y, self.subtitle_y, self.background_dim):
+            widget.valueChanged.connect(self.clear_export_preset)
+        self.normalize_audio.toggled.connect(self.clear_export_preset)
+        self.readable_subtitles.toggled.connect(self.clear_export_preset)
         row = QHBoxLayout()
         self.export_button = button("Экспортировать отмеченные", self.export_selected, True)
         row.addWidget(self.export_button)
@@ -497,7 +526,7 @@ class MainWindow(QMainWindow):
         self.top.setEnabled(upper)
         self.video_y.setEnabled(upper)
         notices = {
-            "top_black": "Видео целиком вписано сверху, нижняя тёмная зона остаётся для анимаций.",
+            "top_black": "Видео целиком вписано сверху, нижняя тёмная зона остаётся свободной для монтажа.",
             "blur_center": "Видео целиком по центру, фон — его синхронная увеличенная размытая копия.",
             "gaming_split": "Игровая нарезка: стример сверху, игра снизу. Обе области берутся из одного отрывка и остаются синхронными; результат 9:16 без растяжения.",
         }
@@ -563,6 +592,8 @@ class MainWindow(QMainWindow):
             dialog = GamingRegionsDialog(copy.copy(self.project.media), copy.copy(self.tools), settings, at, self)
             if dialog.exec() == QDialog.Accepted:
                 self.gaming_camera, self.gaming_game, self.gaming_fraction = dialog.regions()
+                if self.applied_export_preset == "gaming" and abs(self.gaming_fraction-.35) > 1e-6:
+                    self.clear_export_preset()
                 self.project.export = self.export_settings()
                 self.export_layout_changed()
                 self.changed()
@@ -587,12 +618,8 @@ class MainWindow(QMainWindow):
             media, candidate, tools = copy.deepcopy(self.project.media), copy.deepcopy(candidate), copy.copy(self.tools)
             self.close_export_preview()
             settings.require_gaming_regions()
-            segments, cache = copy.deepcopy(self.project.segments), self.cache
-            def completed(result):
-                data, warnings = result
-                self.publish_animation_plans([candidate])
-                if warnings:
-                    self.queue.setPlainText("\n".join(warnings))
+            segments = copy.deepcopy(self.project.segments)
+            def completed(data):
                 image = QImage.fromData(data)
                 if image.isNull():
                     self.show_error("Не удалось прочитать кадр оформления.")
@@ -601,7 +628,7 @@ class MainWindow(QMainWindow):
                 dialog.setAttribute(Qt.WA_DeleteOnClose)
                 dialog.setWindowTitle("Предпросмотр оформления")
                 layout = QVBoxLayout(dialog)
-                heading = note(f"{timecode(candidate.start_ms)}–{timecode(candidate.end_ms)} · {EXPORT_LAYOUTS[settings.layout]}\nОдин кадр с выбранным оформлением, обработкой цвета и встроенными субтитрами. Анимация показана в этот момент времени; звук проверяется в готовом MP4.")
+                heading = note(f"{timecode(candidate.start_ms)}–{timecode(candidate.end_ms)} · {EXPORT_LAYOUTS[settings.layout]}\nОдин кадр с выбранным оформлением, обработкой цвета и встроенными субтитрами. Звук проверяется в готовом MP4.")
                 layout.addWidget(heading)
                 preview = VideoPreview()
                 preview.set_image(image)
@@ -612,8 +639,7 @@ class MainWindow(QMainWindow):
                 dialog.destroyed.connect(lambda: setattr(self, "export_preview_dialog", None) if self.export_preview_dialog is dialog else None)
                 dialog.show()
             def execute(token, progress):
-                warnings = prepare_animations([candidate], settings, tools, cache, token, progress)
-                return composition_frame(media, candidate, settings, tools, token, segments), warnings
+                return composition_frame(media, candidate, settings, tools, token, segments)
             self.start_task(execute, completed)
         except ValueError as exc:
             self.show_error(exc)
@@ -764,7 +790,7 @@ class MainWindow(QMainWindow):
             self.start_task(lambda token, progress: probe(Path(path), self.tools, token), self.media_loaded)
 
     def media_loaded(self, media):
-        self.project = Project(media)
+        self.project = Project(media, search=search_profile(SearchSettings(), "memes"))
         self.boundary_undo.clear()
         self.close_assistant_dialog()
         self.project_path = None
@@ -789,23 +815,14 @@ class MainWindow(QMainWindow):
         self.boundary_undo.clear()
         for c in self.categories:
             c.setChecked(c.text() in p.search.categories)
-        self.export_layout.setCurrentIndex(list(EXPORT_LAYOUTS).index(p.export.layout))
-        self.gaming_camera = copy.deepcopy(p.export.gaming_camera)
-        self.gaming_game = list(p.export.gaming_game)
-        self.gaming_fraction = p.export.gaming_fraction
-        self.aspect.setCurrentText(p.export.aspect)
-        self.resolution.setCurrentText(str(p.export.resolution))
-        self.fps.setCurrentText(str(p.export.fps))
-        self.quality.setCurrentIndex(min(range(3), key=lambda i: abs([18, 20, 25][i] - p.export.quality)))
-        self.top.setValue(round(p.export.top_fraction * 100))
-        self.video_y.setValue(round(p.export.video_y * 100))
-        self.subtitle_y.setValue(round(p.export.subtitle_y * 100))
-        self.subtitle_mode.setCurrentIndex(["off", "srt", "burn"].index(p.export.subtitles))
-        self.color_mode.setCurrentIndex(["off", "soft", "bright"].index(p.export.color))
-        self.normalize_audio.setChecked(p.export.normalize_audio)
-        self.readable_subtitles.setChecked(p.export.readable_subtitles)
-        self.background_dim.setValue(round(p.export.background_dim * 100))
-        self.animation_mode.setCurrentIndex(["off", "varied", "qwen", *SCENES].index(p.export.animation))
+        previous = self._profile_update
+        self._profile_update = True
+        try:
+            self.search_profile.setCurrentIndex(self.search_profile.findData(p.search.profile))
+            self.profile_hint.setText(SEARCH_PROFILES[p.search.profile].description if p.search.profile != "custom" else "Собственные длительности и общий смысловой отбор. Рейтинг — внутренняя оценка, не прогноз просмотров.")
+        finally:
+            self._profile_update = previous
+        self.load_export_ui(p.export)
         url = QUrl.fromLocalFile(m.path)
         self.preview_end = None
         if self.player.source() != url:
@@ -818,10 +835,85 @@ class MainWindow(QMainWindow):
         self.refresh_candidates()
         self.refresh_transcript()
 
+    def load_export_ui(self, settings):
+        previous = self._profile_update
+        self._profile_update = True
+        try:
+            self.applied_export_preset = settings.preset
+            self.export_preset.setCurrentIndex(self.export_preset.findData(settings.preset))
+            self.export_layout.setCurrentIndex(list(EXPORT_LAYOUTS).index(settings.layout))
+            self.gaming_camera = copy.deepcopy(settings.gaming_camera)
+            self.gaming_game = list(settings.gaming_game)
+            self.gaming_fraction = settings.gaming_fraction
+            self.aspect.setCurrentText(settings.aspect)
+            self.resolution.setCurrentText(str(settings.resolution))
+            self.fps.setCurrentText(str(settings.fps))
+            self.quality.setCurrentIndex(min(range(3), key=lambda i: abs([18, 20, 25][i] - settings.quality)))
+            self.top.setValue(round(settings.top_fraction * 100))
+            self.video_y.setValue(round(settings.video_y * 100))
+            self.subtitle_y.setValue(round(settings.subtitle_y * 100))
+            self.subtitle_mode.setCurrentIndex(["off", "srt", "burn"].index(settings.subtitles))
+            self.color_mode.setCurrentIndex(["off", "soft", "bright"].index(settings.color))
+            self.normalize_audio.setChecked(settings.normalize_audio)
+            self.readable_subtitles.setChecked(settings.readable_subtitles)
+            self.background_dim.setValue(round(settings.background_dim * 100))
+        finally:
+            self._profile_update = previous
+        self.export_layout_changed()
+
+    def search_profile_changed(self, *_):
+        if self._profile_update:
+            return
+        code = self.search_profile.currentData()
+        if code == "custom":
+            self.profile_hint.setText("Собственные длительности и общий смысловой отбор. Рейтинг — внутренняя оценка, не прогноз просмотров.")
+        else:
+            profile = SEARCH_PROFILES[code]
+            self.minimum.setValue(profile.minimum)
+            self.maximum.setValue(profile.maximum)
+            self.profile_hint.setText(profile.description)
+        if self.project:
+            try:
+                self.project.search = self.search_settings()
+            except ValueError as exc:
+                self.show_error(exc)
+                return
+            self.changed()
+            self.status.setText("Стиль поиска изменён. Найденные клипы сохранены; новый поиск запускается кнопкой «Найти эпизоды».")
+
+    def clear_export_preset(self, *_):
+        if self._profile_update or not self.project:
+            return
+        self.applied_export_preset = "custom"
+        self.export_preset.setCurrentIndex(0)
+        try:
+            self.project.export = self.export_settings()
+            self.changed()
+        except ValueError:
+            # A partially edited set of controls is validated on save/export.
+            self.project.export.preset = "custom"
+
+    def apply_export_preset(self):
+        if not self.project or self.task_thread is not None:
+            return
+        code = self.export_preset.currentData()
+        if code == "custom":
+            self.clear_export_preset()
+            return
+        base = copy.deepcopy(self.project.export)
+        base.gaming_camera, base.gaming_game = copy.deepcopy(self.gaming_camera), list(self.gaming_game)
+        settings = export_profile(base, code, self.project.media, bool(self.project.segments))
+        self.project.export = settings
+        self.load_export_ui(settings)
+        self.changed()
+        self.status.setText("Профиль применён. Проверьте кадр; индивидуальные оформления клипов сохранены." +
+                            (" Выделите области кнопкой «Камера и игра…»." if code == "gaming" and settings.gaming_camera is None else "") +
+                            (" Субтитры выключены: расшифровки пока нет." if not self.project.segments else ""))
+
     def search_settings(self):
         result = SearchSettings(self.count.value(), self.minimum.value(), self.maximum.value(), self.sensitivity.value(),
                                 [c.text() for c in self.categories if c.isChecked()],
-                                target_count=self.target_count.value(), min_score=self.min_score.value())
+                                target_count=self.target_count.value(), min_score=self.min_score.value(), profile=self.search_profile.currentData())
         result.validate()
         return result
 
@@ -834,7 +926,7 @@ class MainWindow(QMainWindow):
                                 color=["off", "soft", "bright"][self.color_mode.currentIndex()],
                                 normalize_audio=self.normalize_audio.isChecked(), readable_subtitles=self.readable_subtitles.isChecked(),
                                 background_dim=self.background_dim.value()/100,
-                                animation=["off", "varied", "qwen", *SCENES][self.animation_mode.currentIndex()])
+                                preset=self.applied_export_preset)
         result.validate()
         return result
 
@@ -1297,44 +1389,26 @@ class MainWindow(QMainWindow):
             self.project.export = settings
             self.changed()
             self.persist_settings()
-            project, tools, output, cache = copy.deepcopy(self.project), copy.copy(self.tools), self.output, self.cache
+            project, tools, output = copy.deepcopy(self.project), copy.copy(self.tools), self.output
             self.queue.clear()
             for i, (c, effective) in enumerate(plan, 1):
                 width, height = effective.dimensions()
                 self.queue.append(f"{i}. {timecode(c.start_ms)} → {timecode(c.end_ms)} · {EXPORT_LAYOUTS[effective.layout]} · {width}×{height} — в очереди")
             def execute(token, progress):
                 results = []
-                warnings = prepare_animations([c for c, _ in plan], settings, tools, cache, token, progress)
                 for index, (c, effective) in enumerate(plan):
                     token.check()
                     path = export_clip(project.media, c, project.segments, effective, output, tools, token,
-                                       lambda value, text: progress(int((index + value / 100) / len(selected) * 100), f"{index + 1}/{len(selected)} · {text}"), cache=cache)
+                                       lambda value, text: progress(int((index + value / 100) / len(selected) * 100), f"{index + 1}/{len(selected)} · {text}"))
                     results.append(str(path))
                     progress(int((index + 1) / len(selected) * 100), "Готов: " + str(path))
-                return dict(paths=results, clips=[c for c, _ in plan], warnings=warnings)
+                return results
             self.start_task(execute, self.exports_ready)
         except (ValueError, OSError) as exc:
             self.show_error(exc)
 
-    def publish_animation_plans(self, clips):
-        if not self.project:
-            return
-        changed = False
-        by_id = {c.id: c for c in clips}
-        for c in self.project.candidates:
-            other = by_id.get(c.id)
-            if other and (c.start_ms, c.end_ms) == (other.start_ms, other.end_ms) and other.animation_plan != c.animation_plan:
-                c.animation_plan = copy.deepcopy(other.animation_plan)
-                changed = True
-        if changed:
-            self.changed()
-
     def exports_ready(self, paths):
-        warnings = []
-        if isinstance(paths, dict):
-            self.publish_animation_plans(paths["clips"])
-            warnings, paths = paths["warnings"], paths["paths"]
-        self.queue.setPlainText("Проверенные файлы:\n" + "\n".join(paths) + ("\n\n" + "\n".join(warnings) if warnings else ""))
+        self.queue.setPlainText("Проверенные файлы:\n" + "\n".join(paths))
         self.status.setText(f"Экспорт завершён: {len(paths)} файлов. MP4 проверены декодированием.")
         self.progress.setValue(100)
 

@@ -532,13 +532,13 @@ def test_comfort_controls_preview_export_and_project_roundtrip(app, window, medi
     window.refresh_candidates()
     window.resolution.setCurrentText('720');window.color_mode.setCurrentIndex(1)
     window.normalize_audio.setChecked(True);window.readable_subtitles.setChecked(True)
-    window.background_dim.setValue(35);window.animation_mode.setCurrentIndex(3)  # waves
+    window.background_dim.setValue(35)
     window.subtitle_mode.setCurrentIndex(2)
     window.preview_export_clip();assert not window.comfort_group.isEnabled()
     wait_task(app,window)
-    assert window.export_preview_dialog and c.animation_plan['scene']=='waves'
+    assert window.export_preview_dialog and not hasattr(window, "animation_mode")
     image=window.export_preview_dialog.findChild(VideoPreview).image
-    assert image.pixelColor(180,500).value()>8
+    assert image.pixelColor(180,500).value()<=5
     window.close_export_preview()
     window.export_folder.setText(str(tmp_path/'output'))
     window.export_selected();wait_task(app,window,60)
@@ -547,5 +547,74 @@ def test_comfort_controls_preview_export_and_project_roundtrip(app, window, medi
     path=tmp_path/'project.json';save_project(window.project,path)
     project=load_project(path);window.project=project;window.load_ui()
     assert window.color_mode.currentIndex()==1 and window.normalize_audio.isChecked()
-    assert window.background_dim.value()==35 and window.animation_mode.currentIndex()==3
-    assert project.candidates[0].animation_plan['key']==c.animation_plan['key']
+    assert window.background_dim.value()==35
+
+
+def test_search_profiles_new_defaults_change_without_analysis_and_restore_legacy(app,window,media,tmp_path):
+    import json
+    from clipnado.models import Candidate
+    from clipnado.projects import load_project,save_project
+    window.media_loaded(media)
+    assert window.search_settings().profile=='memes'
+    assert (window.minimum.value(),window.maximum.value())==(10,40)
+    c=Candidate(media.source_file_id,0,3000,80,'Юмор','Существующий клип',selected=True)
+    window.project.candidates=[c];window.refresh_candidates()
+    window.search_profile.setCurrentIndex(window.search_profile.findData('quote'))
+    assert (window.minimum.value(),window.maximum.value())==(8,20)
+    assert window.project.candidates==[c] and window.task_thread is None
+    # Manual duration overrides survive roundtrip without reapplying defaults.
+    window.minimum.setValue(6);window.project.search=window.search_settings()
+    path=tmp_path/'profiles.json';save_project(window.project,path)
+    window.project=load_project(path);window.load_ui()
+    assert window.search_profile.currentData()=='quote' and window.minimum.value()==6
+    data=window.project.to_dict();data['search'].pop('profile');data['search'].update(min_seconds=60,max_seconds=90)
+    data['export'].pop('preset');path.write_text(json.dumps(data),encoding='utf-8')
+    window.project=load_project(path);window.load_ui()
+    assert window.search_profile.currentData()=='custom' and (window.minimum.value(),window.maximum.value())==(60,90)
+
+
+def test_export_profiles_apply_preserve_individual_choices_and_roundtrip(app,window,media,tmp_path):
+    from clipnado.models import Candidate
+    from clipnado.projects import load_project,save_project
+    from scripts.gaming_smoke import CAMERA,GAME
+    window.media_loaded(media)
+    window.project.segments=[Segment(0,media.duration_ms,'Проверяем полный короткий мем с реакцией.')]
+    a=Candidate(media.source_file_id,1000,4000,80,'Юмор','Мем',selected=True)
+    b=Candidate(media.source_file_id,4000,7000,80,'История','Другой формат',selected=True,export_layout='blur_center')
+    window.project.candidates=[a,b];window.refresh_candidates()
+    window.gaming_camera=CAMERA.copy();window.gaming_game=GAME.copy()
+    window.boundary_undo=[('keep',a)]
+    window.export_preset.setCurrentIndex(window.export_preset.findData('gaming'));window.apply_export_preset()
+    settings=window.export_settings()
+    assert settings.preset=='gaming' and settings.layout=='gaming_split' and settings.gaming_fraction==.35
+    assert (settings.resolution,settings.fps,settings.quality)==(1080,30,18)
+    assert settings.normalize_audio and settings.readable_subtitles and settings.subtitles=='burn'
+    assert settings.gaming_camera==CAMERA and settings.gaming_game==GAME
+    assert [c.export_layout for c in window.project.candidates]==[None,'blur_center'] and window.boundary_undo
+    path=tmp_path/'preset.json';save_project(window.project,path)
+    window.project=load_project(path);window.load_ui()
+    assert window.export_preset.currentData()=='gaming' and window.applied_export_preset=='gaming'
+    assert window.export_settings()==settings
+    window.resolution.setCurrentText('720')
+    assert window.export_settings().preset=='custom' and window.export_preset.currentData()=='custom'
+    # A new preset fixes invalid intermediate zone controls, without losing ROIs.
+    window.video_y.setValue(80)
+    window.export_preset.setCurrentIndex(window.export_preset.findData('story'));window.apply_export_preset()
+    assert window.export_settings().video_y==0 and window.export_settings().layout=='top_black'
+    assert window.gaming_camera==CAMERA
+
+
+def test_export_profile_real_mp4_subtitles_and_missing_camera_preflight(app,window,media,tmp_path):
+    from clipnado.models import Candidate
+    window.media_loaded(media)
+    window.project.candidates=[Candidate(media.source_file_id,1000,4000,80,'Юмор','Мем',selected=True)]
+    window.project.segments=[Segment(0,media.duration_ms,'Проверяем субтитры и готовый профиль экспорта.')]
+    window.refresh_candidates();window.export_folder.setText(str(tmp_path/'out'))
+    window.export_preset.setCurrentIndex(window.export_preset.findData('gaming'));window.apply_export_preset()
+    window.export_selected()
+    assert window.task_thread is None and window.errors and 'Камера и игра' in str(window.errors[-1])
+    assert not list((tmp_path/'out').glob('*.mp4'));window.errors.clear()
+    window.export_preset.setCurrentIndex(window.export_preset.findData('dialogue'));window.apply_export_preset()
+    window.export_selected();wait_task(app,window,60)
+    assert len(list((tmp_path/'out').glob('*.mp4')))==1
+    assert window.project.export.preset=='dialogue' and window.project.export.subtitles=='burn'

@@ -5,7 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from .models import Candidate, ExportSettings, MediaInfo, Project, SearchSettings, Segment
+from .models import candidate_from_dict, Candidate, ExportSettings, MediaInfo, Project, SearchSettings, Segment
 
 
 def atomic_json(path: Path, value: dict):
@@ -38,6 +38,7 @@ def load_project(path: Path) -> Project:
         # An old project may intentionally show fewer than ten candidates.
         search.setdefault("target_count", min(10, search.get("count", 15)))
         export = dict(data.get("export", {}))
+        retired_animation = export.pop("animation", "off")
         # Old saved projects keep their original appearance.
         export.setdefault("readable_subtitles", False)
         export.setdefault("background_dim", 0.)
@@ -50,16 +51,20 @@ def load_project(path: Path) -> Project:
                     item["export_layout"] = "gaming_split"
                     migrated = True
         warnings = list(data.get("warnings", []))
+        if retired_animation not in (None, "off"):
+            warning = "Встроенные анимации удалены. Нижняя зона остаётся свободной для вашего монтажа."
+            if warning not in warnings:
+                warnings.append(warning)
         if migrated:
             warnings.append("Полный кадр TikTok заменён игровой нарезкой. Перед экспортом задайте области камеры и игры.")
         project = Project(media=MediaInfo(**data["media"]),
                           segments=[Segment(**s) for s in data.get("segments", [])],
-                          candidates=[Candidate(**c) for c in data.get("candidates", [])],
+                          candidates=[candidate_from_dict(c) for c in data.get("candidates", [])],
                           search=SearchSettings(**search),
                           export=ExportSettings(**export),
                           schema_version=data["schema_version"], warnings=warnings,
                           audio_energy=data.get("audio_energy", []), analysis_info=data.get("analysis_info", {}),
-                          query_results=[Candidate(**c) for c in data.get("query_results", [])],
+                          query_results=[candidate_from_dict(c) for c in data.get("query_results", [])],
                           last_query=data.get("last_query", ""), query_info=data.get("query_info", {}))
         project.validate()
         return project

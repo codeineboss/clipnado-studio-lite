@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .local_llm import (ClipProposal, LocalAnalysisResult, LocalModelProvider, PromptTooLong,
                         build_request, clip_proposals, decode_choices, model_identity, stage_model, validate_tools)
-from .models import Candidate, MediaInfo, SearchSettings, Segment, timecode
+from .models import candidate_from_dict, Candidate, MediaInfo, SearchSettings, Segment, timecode
 from .process import Cancellation, Progress
 from .projects import atomic_json
 
@@ -56,15 +56,21 @@ class LocalClipAssistant(LocalModelProvider):
         if not proposals:
             return LocalAnalysisResult([], ["Рядом нет интервала заданной длины. Проверьте настройки длины клипов."], {"complete": True})
         model_id = model_identity(Path(self.tools.semantic_model), token)
+        identity_settings = asdict(settings)
+        if settings.profile == "custom":
+            identity_settings.pop("profile")
+        else:
+            from .profiles import SEARCH_PROFILE_VERSION
+            identity_settings["profile_version"] = SEARCH_PROFILE_VERSION
         payload = {"source": media.source_file_id, "model": model_id, "anchor": [anchor.start_ms, anchor.end_ms],
-                   "segments": [asdict(s) for s in segments[left:right]], "settings": asdict(settings), "version": 1}
+                   "segments": [asdict(s) for s in segments[left:right]], "settings": identity_settings, "version": 1}
         identity = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         folder = cache / "local-refine" / identity
         saved = folder / "result.json"
         allowed = {(p.start_ms, p.end_ms) for p in proposals}
         try:
             data = json.loads(saved.read_text(encoding="utf-8"))
-            candidates = [Candidate(**c) for c in data["candidates"]]
+            candidates = [candidate_from_dict(c) for c in data["candidates"]]
             for c in candidates:
                 c.validate(media)
                 if (c.start_ms, c.end_ms) not in allowed:
