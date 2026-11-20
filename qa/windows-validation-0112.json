@@ -1,0 +1,61 @@
+{
+  "version": "0.1.12",
+  "repository": "codeineboss/clipnado-studio-lite",
+  "tested_commit": "13ec0b9e1a35e1c7cdf2a6dfd8f842bc9b8d22e1",
+  "workflow_run": 44793731588,
+  "workflow_url": "https://github.com/codeineboss/clipnado-studio-lite/actions/runs/44793731588",
+  "windows_tests_passed": 194,
+  "windows_tests_skipped": 0,
+  "actual_whisper": true,
+  "actual_qwen": true,
+  "actual_qwen_meme_profile": true,
+  "actual_portable_gui_verified": true,
+  "portable_profile_export_verified": true,
+  "automatic_minimum_seconds": 30,
+  "automatic_maximum_seconds": 90,
+  "built_in_animations": false,
+  "empty_lower_zone_verified": true,
+  "legacy_animation_projects_and_cache_migrated": true,
+  "individual_clip_layouts_preserved": true,
+  "loudness_color_and_readable_captions_verified": true,
+  "gaming_regions_editor_verified": true,
+  "gaming_mp4_pixels_verified": true,
+  "target_physical_pc_verified": false,
+  "user_camera_quality_issue_verified": false,
+  "published": true,
+  "published_at": "2026-11-20T20:15:45Z",
+  "release_url": "https://github.com/codeineboss/clipnado-studio-lite/releases/tag/preview-0.1.12",
+  "asset_digests_verified": true,
+  "assets": [
+    {
+      "name": "ClipnadoStudioLite-source.zip",
+      "bytes": 10387614,
+      "sha256": "ea89ea3e51444a30b204b8d06104fd1502a937904b6ffe976423493c02795904"
+    },
+    {
+      "name": "ClipnadoStudioLite-Windows-x64.zip",
+      "bytes": 463775953,
+      "sha256": "b463119fcbd0a51bbfde7fcd07475aa1a0295d1a8628af56f9439a95a4e9e87e"
+    },
+    {
+      "name": "QA_REPORT.md",
+      "bytes": 7023,
+      "sha256": "0e145d7b588d4cd82ba5ad25bcdd44da1b813ecc6c8d0adfaa45e2c6206f698d"
+    },
+    {
+      "name": "Qwen_Qwen3-4B-Instruct-2507-Q3_K_M.gguf",
+      "bytes": 2075618016,
+      "sha256": "35295e9a0a42eff5ebc592412c754991c0b6cc36bf4f282b2a491b211476752d"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "bytes": 467,
+      "sha256": "6f0a6a4e378473f53a1dd95cd34fafd994f46b08731db801e7b1cce4245bb853"
+    },
+    {
+      "name": "START-HERE.md",
+      "bytes": 18130,
+      "sha256": "c1609678ff87d387167881b895916c42201c29c9420dd6619a75d4a54be7d509"
+    }
+  ]
+}
