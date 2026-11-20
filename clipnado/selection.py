@@ -15,7 +15,9 @@ def content_words(text):
 
 
 def choose_candidates(candidates: list[Candidate], settings: SearchSettings, token: Cancellation) -> list[Candidate]:
-    """Prefer reaching the target, then total score, using disjoint intervals.
+    """Choose disjoint episodes; mixed mode prioritizes stronger complete clips.
+
+    Other modes prefer reaching the target, then total score.
 
     Retaining alternative boundaries is essential: a greedy high-scoring long
     interval can otherwise block two equally valid shorter episodes. Extra
@@ -32,33 +34,38 @@ def choose_candidates(candidates: list[Candidate], settings: SearchSettings, tok
     pool = sorted(unique.values(), key=lambda c: (c.end_ms, c.start_ms, -c.score))
     if not pool:
         return []
-    ends = [c.end_ms for c in pool]
-    previous = [bisect.bisect_right(ends, c.start_ms, hi=i) for i, c in enumerate(pool)]
-    target = min(settings.target_count, len(pool))
-    # scores[k][i] is the maximum total score for exactly k intervals in pool[:i].
-    scores = [[0] * (len(pool) + 1)]
-    for k in range(1, target + 1):
-        token.check()
-        row = [-1] * (len(pool) + 1)
-        for i, c in enumerate(pool, 1):
-            if i % 1024 == 0:
-                token.check()
-            before = scores[k - 1][previous[i - 1]]
-            take = before + c.score if before >= 0 else -1
-            row[i] = max(row[i - 1], take)
-        scores.append(row)
-        if row[-1] < 0:
-            break
-    k = max(i for i, row in enumerate(scores) if row[-1] >= 0)
-    chosen = []
-    i = len(pool)
-    while k and i:
-        if scores[k][i] == scores[k][i - 1]:
-            i -= 1
-        else:
-            chosen.append(pool[i - 1])
-            i = previous[i - 1]
-            k -= 1
+    if settings.profile == "mixed":
+        # Preserve a stronger complete story when weaker excerpts overlap it.
+        # A target count must not force an otherwise good episode into pieces.
+        chosen = sorted(pool, key=lambda c: (-c.score, c.start_ms, c.end_ms))
+    else:
+        ends = [c.end_ms for c in pool]
+        previous = [bisect.bisect_right(ends, c.start_ms, hi=i) for i, c in enumerate(pool)]
+        target = min(settings.target_count, len(pool))
+        # scores[k][i] is the maximum total score for exactly k intervals in pool[:i].
+        scores = [[0] * (len(pool) + 1)]
+        for k in range(1, target + 1):
+            token.check()
+            row = [-1] * (len(pool) + 1)
+            for i, c in enumerate(pool, 1):
+                if i % 1024 == 0:
+                    token.check()
+                before = scores[k - 1][previous[i - 1]]
+                take = before + c.score if before >= 0 else -1
+                row[i] = max(row[i - 1], take)
+            scores.append(row)
+            if row[-1] < 0:
+                break
+        k = max(i for i, row in enumerate(scores) if row[-1] >= 0)
+        chosen = []
+        i = len(pool)
+        while k and i:
+            if scores[k][i] == scores[k][i - 1]:
+                i -= 1
+            else:
+                chosen.append(pool[i - 1])
+                i = previous[i - 1]
+                k -= 1
 
     # Human-visible textual repeats cannot fill the target. Keep the strongest
     # occurrence, then try additional distinct episodes from the entire pool.
@@ -85,6 +92,8 @@ def choose_candidates(candidates: list[Candidate], settings: SearchSettings, tok
         exact_texts.add(exact)
     for c in sorted(chosen, key=lambda c: (-c.score, c.start_ms)):
         token.check()
+        if len(selected) >= settings.count * 3:
+            break
         append(c)
     for c in sorted(pool, key=lambda c: (-c.score, c.start_ms, c.end_ms)):
         token.check()

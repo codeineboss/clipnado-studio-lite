@@ -29,7 +29,7 @@ from . import __version__
 from .analysis import recognize
 from .export import clip_export_settings, composition_frame, export_clip
 from .gaming import GamingRegionsDialog
-from .profiles import SEARCH_PROFILES, EXPORT_PROFILES, search_profile, export_profile
+from .profiles import SEARCH_PROFILES, EXPORT_PROFILES, search_profile, export_profile, maximum_seconds
 from .media import Tools, probe, thumbnail
 from .models import EXPORT_LAYOUTS, Candidate, ExportSettings, Project, SearchSettings, Segment, parse_time, timecode
 from .process import Cancellation, Cancelled, run
@@ -37,7 +37,7 @@ from .preview import VideoPreview
 from .projects import load_project, save_project
 from .selection import shortfall_message
 from .settings import data_root, read_settings, restore_tools, write_settings
-from .subtitles import from_srt
+from .transcript_io import from_srt
 from .workers import Worker
 from .local_llm import LocalModelProvider, prepare_backend
 from .assist import LocalClipAssistant
@@ -219,8 +219,8 @@ class MainWindow(QMainWindow):
         self.count = spin(1, 100, 15)
         self.target_count = spin(1, 100, 10)
         self.min_score = spin(0, 100, 60)
-        self.minimum = spin(30, 90, 30)
-        self.minimum.setToolTip("Автоматический поиск: клипы не короче 30 секунд")
+        self.minimum = spin(15, 90, 15)
+        self.minimum.setToolTip("Автоматический поиск: клипы не короче 15 секунд")
         self.sensitivity = spin(0, 100, 55)
         self.search_profile = QComboBox()
         self.search_profile.addItem("Свои настройки", "custom")
@@ -230,7 +230,7 @@ class MainWindow(QMainWindow):
         self.search_profile.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.search_profile.setMinimumContentsLength(12)
         self.search_profile.setCurrentIndex(1)
-        self.profile_hint = note(SEARCH_PROFILES["memes"].description)
+        self.profile_hint = note(SEARCH_PROFILES["mixed"].description)
         form.addRow("Стиль поиска", self.search_profile)
         form.addRow(self.profile_hint)
         self.search_profile.currentIndexChanged.connect(self.search_profile_changed)
@@ -244,7 +244,8 @@ class MainWindow(QMainWindow):
         durations_row = QHBoxLayout(durations)
         durations_row.setContentsMargins(0, 0, 0, 0)
         durations_row.addWidget(self.minimum)
-        durations_row.addWidget(QLabel("Максимум 90 с"))
+        self.search_maximum = QLabel("Максимум 90 с")
+        durations_row.addWidget(self.search_maximum)
         form.addRow("Минимум, секунд", durations)
         self.categories = []
         for label in ("История", "Юмор", "Реакция", "Неожиданность"):
@@ -374,7 +375,7 @@ class MainWindow(QMainWindow):
     def create_transcript_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.addWidget(note("Исправляйте текст и временные метки перед экспортом. Изменения применяются к субтитрам. Для нового поиска нажмите «Найти эпизоды»: сохранённый текст будет использован повторно."))
+        layout.addWidget(note("Исправляйте текст и временные метки для более точного смыслового отбора. Для нового поиска нажмите «Найти эпизоды»: сохранённый текст будет использован повторно."))
         row = QHBoxLayout()
         self.srt_import = button("Импорт SRT", self.import_srt)
         row.addWidget(self.srt_import)
@@ -418,7 +419,7 @@ class MainWindow(QMainWindow):
         profile_layout.addWidget(self.export_preset, 1)
         profile_layout.addWidget(button("Применить профиль", self.apply_export_preset))
         form.addRow("Готовое оформление", profile_row)
-        form.addRow(note("Профили задают 1080p, высокое качество, FPS по исходнику, выравнивание звука и читаемые субтитры при наличии текста. Индивидуальные варианты клипов сохраняются. Профиль не предсказывает просмотры."))
+        form.addRow(note("Профили задают 1080p, высокое качество, FPS по исходнику, выравнивание звука. Индивидуальные варианты клипов сохраняются. Профиль не предсказывает просмотры."))
         self.export_layout = combo(list(EXPORT_LAYOUTS.values()))
         self.gaming_summary = QLabel("Области камеры и игры ещё не выбраны")
         self.gaming_summary.setWordWrap(True)
@@ -428,11 +429,8 @@ class MainWindow(QMainWindow):
         self.quality = combo(["Высокое · CRF 18", "Стандарт · CRF 20", "Компактно · CRF 25"], "Высокое · CRF 18")
         self.top = spin(20, 100, 40)
         self.video_y = spin(0, 80, 0)
-        self.subtitle_y = spin(0, 99, 31)
-        self.subtitle_mode = combo(["Выключены", "Отдельный SRT", "Встроить в видео"])
         for label, widget in [("Общее оформление", self.export_layout), ("Игровая нарезка", self.gaming_summary), ("Холст для первых двух вариантов", self.aspect), ("Размер, p", self.resolution), ("FPS", self.fps), ("Качество H.264", self.quality),
-                              ("Высота зоны видео, %", self.top), ("Отступ зоны сверху, %", self.video_y),
-                              ("Субтитры", self.subtitle_mode), ("Позиция текста от верха, %", self.subtitle_y)]:
+                              ("Высота зоны видео, %", self.top), ("Отступ зоны сверху, %", self.video_y)]:
             form.addRow(label, widget)
         self.export_folder = QLineEdit(str(self.output))
         folder_row = QWidget()
@@ -447,14 +445,11 @@ class MainWindow(QMainWindow):
         comfort_form = QFormLayout(comfort)
         self.color_mode = combo(["Исходные цвета", "Мягкая коррекция", "Немного светлее"])
         self.normalize_audio = QCheckBox("Выравнивать громкость отрывка (цель −16 LUFS)")
-        self.readable_subtitles = QCheckBox("Крупнее, не более двух коротких строк")
-        self.readable_subtitles.setChecked(True)
         self.background_dim = spin(0, 60, 25)
         comfort_form.addRow("Цвет", self.color_mode)
         comfort_form.addRow("Звук", self.normalize_audio)
-        comfort_form.addRow("Субтитры", self.readable_subtitles)
         comfort_form.addRow("Затемнение размытого фона, %", self.background_dim)
-        comfort_form.addRow(note("Пропорции сохраняются. Светлые и тёмные исходники лучше оценивать по предпросмотру. Выравнивается весь звук, включая игру; речь отдельно не выделяется. Короткие карточки субтитров используют примерное время внутри реплики."))
+        comfort_form.addRow(note("Пропорции сохраняются. Светлые и тёмные исходники лучше оценивать по предпросмотру. Выравнивается весь звук, включая игру; речь отдельно не выделяется."))
         layout.addWidget(comfort)
         self.export_notice = QLabel()
         self.export_notice.setWordWrap(True)
@@ -487,19 +482,17 @@ class MainWindow(QMainWindow):
         layout.insertWidget(2, self.export_clips, 2)
         self.export_layout.currentIndexChanged.connect(self.export_layout_changed)
         self.export_layout_changed()
-        for widget in (self.aspect, self.resolution, self.fps, self.quality, self.subtitle_mode, self.color_mode):
+        for widget in (self.aspect, self.resolution, self.fps, self.quality, self.color_mode):
             widget.currentIndexChanged.connect(self.close_export_preview)
-        for widget in (self.top, self.video_y, self.subtitle_y, self.background_dim):
+        for widget in (self.top, self.video_y, self.background_dim):
             widget.valueChanged.connect(self.close_export_preview)
         self.normalize_audio.toggled.connect(self.close_export_preview)
-        self.readable_subtitles.toggled.connect(self.close_export_preview)
-        for widget in (self.aspect, self.resolution, self.fps, self.quality, self.subtitle_mode,
+        for widget in (self.aspect, self.resolution, self.fps, self.quality,
                        self.color_mode, self.export_layout):
             widget.currentIndexChanged.connect(self.clear_export_preset)
-        for widget in (self.top, self.video_y, self.subtitle_y, self.background_dim):
+        for widget in (self.top, self.video_y, self.background_dim):
             widget.valueChanged.connect(self.clear_export_preset)
         self.normalize_audio.toggled.connect(self.clear_export_preset)
-        self.readable_subtitles.toggled.connect(self.clear_export_preset)
         row = QHBoxLayout()
         self.export_button = button("Экспортировать отмеченные", self.export_selected, True)
         row.addWidget(self.export_button)
@@ -529,7 +522,7 @@ class MainWindow(QMainWindow):
             "blur_center": "Видео целиком по центру, фон — его синхронная увеличенная размытая копия.",
             "gaming_split": "Игровая нарезка: стример сверху, игра снизу. Обе области берутся из одного отрывка и остаются синхронными; результат 9:16 без растяжения.",
         }
-        self.export_notice.setText("Общее оформление: " + notices[code] + " В таблице можно выбрать свой вариант для каждого клипа. Области камеры и игры общие для выбранного видео. Для высокого качества выберите 1080p, CRF 18 и FPS исходника. Разрешение, FPS, качество и субтитры — общие. Обработка изображения и звука включается отдельно ниже.")
+        self.export_notice.setText("Общее оформление: " + notices[code] + " В таблице можно выбрать свой вариант для каждого клипа. Области камеры и игры общие для выбранного видео. Для высокого качества выберите 1080p, CRF 18 и FPS исходника. Разрешение, FPS и качество — общие. Обработка изображения и звука включается отдельно ниже.")
         self.refresh_export_clips()
 
     def refresh_export_clips(self):
@@ -627,7 +620,7 @@ class MainWindow(QMainWindow):
                 dialog.setAttribute(Qt.WA_DeleteOnClose)
                 dialog.setWindowTitle("Предпросмотр оформления")
                 layout = QVBoxLayout(dialog)
-                heading = note(f"{timecode(candidate.start_ms)}–{timecode(candidate.end_ms)} · {EXPORT_LAYOUTS[settings.layout]}\nОдин кадр с выбранным оформлением, обработкой цвета и встроенными субтитрами. Звук проверяется в готовом MP4.")
+                heading = note(f"{timecode(candidate.start_ms)}–{timecode(candidate.end_ms)} · {EXPORT_LAYOUTS[settings.layout]}\nОдин кадр с выбранным оформлением, обработкой цвета. Звук проверяется в готовом MP4.")
                 layout.addWidget(heading)
                 preview = VideoPreview()
                 preview.set_image(image)
@@ -789,7 +782,7 @@ class MainWindow(QMainWindow):
             self.start_task(lambda token, progress: probe(Path(path), self.tools, token), self.media_loaded)
 
     def media_loaded(self, media):
-        self.project = Project(media, search=search_profile(SearchSettings(min_seconds=30, max_seconds=90), "memes"))
+        self.project = Project(media, search=search_profile(SearchSettings(min_seconds=15, max_seconds=90), "mixed"))
         self.boundary_undo.clear()
         self.close_assistant_dialog()
         self.project_path = None
@@ -806,8 +799,11 @@ class MainWindow(QMainWindow):
         self.count.setValue(p.search.count)
         self.target_count.setValue(p.search.target_count)
         self.min_score.setValue(p.search.min_score)
-        p.search.min_seconds = min(90, max(30, p.search.min_seconds))
-        p.search.max_seconds = 90
+        limit = maximum_seconds(p.search.profile)
+        p.search.min_seconds = min(limit, max(15, p.search.min_seconds))
+        p.search.max_seconds = limit
+        self.minimum.setMaximum(limit)
+        self.search_maximum.setText(f"Максимум {limit} с")
         self.minimum.setValue(p.search.min_seconds)
         self.sensitivity.setValue(p.search.sensitivity)
         self.content_query.setText(p.last_query)
@@ -819,7 +815,7 @@ class MainWindow(QMainWindow):
         self._profile_update = True
         try:
             self.search_profile.setCurrentIndex(self.search_profile.findData(p.search.profile))
-            self.profile_hint.setText(SEARCH_PROFILES[p.search.profile].description if p.search.profile != "custom" else "Общий диапазон 30–90 секунд и смысловой отбор. Рейтинг — внутренняя оценка, не прогноз просмотров.")
+            self.profile_hint.setText(SEARCH_PROFILES[p.search.profile].description if p.search.profile != "custom" else "Поиск 15–60 секунд и смысловой отбор. Рейтинг — внутренняя оценка, не прогноз просмотров.")
         finally:
             self._profile_update = previous
         self.load_export_ui(p.export)
@@ -851,11 +847,8 @@ class MainWindow(QMainWindow):
             self.quality.setCurrentIndex(min(range(3), key=lambda i: abs([18, 20, 25][i] - settings.quality)))
             self.top.setValue(round(settings.top_fraction * 100))
             self.video_y.setValue(round(settings.video_y * 100))
-            self.subtitle_y.setValue(round(settings.subtitle_y * 100))
-            self.subtitle_mode.setCurrentIndex(["off", "srt", "burn"].index(settings.subtitles))
             self.color_mode.setCurrentIndex(["off", "soft", "bright"].index(settings.color))
             self.normalize_audio.setChecked(settings.normalize_audio)
-            self.readable_subtitles.setChecked(settings.readable_subtitles)
             self.background_dim.setValue(round(settings.background_dim * 100))
         finally:
             self._profile_update = previous
@@ -865,8 +858,11 @@ class MainWindow(QMainWindow):
         if self._profile_update:
             return
         code = self.search_profile.currentData()
+        limit = maximum_seconds(code)
+        self.minimum.setMaximum(limit)
+        self.search_maximum.setText(f"Максимум {limit} с")
         if code == "custom":
-            self.profile_hint.setText("Общий диапазон 30–90 секунд и смысловой отбор. Рейтинг — внутренняя оценка, не прогноз просмотров.")
+            self.profile_hint.setText("Поиск 15–60 секунд и смысловой отбор. Рейтинг — внутренняя оценка, не прогноз просмотров.")
         else:
             profile = SEARCH_PROFILES[code]
             self.profile_hint.setText(profile.description)
@@ -905,26 +901,26 @@ class MainWindow(QMainWindow):
         self.load_export_ui(settings)
         self.changed()
         self.status.setText("Профиль применён. Проверьте кадр; индивидуальные оформления клипов сохранены." +
-                            (" Выделите области кнопкой «Камера и игра…»." if code == "gaming" and settings.gaming_camera is None else "") +
-                            (" Субтитры выключены: расшифровки пока нет." if not self.project.segments else ""))
+                            (" Выделите области кнопкой «Камера и игра…»." if code == "gaming" and settings.gaming_camera is None else ""))
 
     def search_settings(self):
-        result = SearchSettings(self.count.value(), self.minimum.value(), 90, self.sensitivity.value(),
+        result = SearchSettings(self.count.value(), self.minimum.value(), maximum_seconds(self.search_profile.currentData()), self.sensitivity.value(),
                                 [c.text() for c in self.categories if c.isChecked()],
                                 target_count=self.target_count.value(), min_score=self.min_score.value(), profile=self.search_profile.currentData())
         result.validate()
         return result
 
     def export_settings(self):
-        result = ExportSettings(self.aspect.currentText(), int(self.resolution.currentText()), int(self.fps.currentText()),
-                                [18, 20, 25][self.quality.currentIndex()], self.top.value() / 100, self.video_y.value() / 100,
-                                ["off", "srt", "burn"][self.subtitle_mode.currentIndex()], self.subtitle_y.value() / 100,
-                                list(EXPORT_LAYOUTS)[self.export_layout.currentIndex()],
-                                copy.deepcopy(self.gaming_camera), list(self.gaming_game), self.gaming_fraction,
-                                color=["off", "soft", "bright"][self.color_mode.currentIndex()],
-                                normalize_audio=self.normalize_audio.isChecked(), readable_subtitles=self.readable_subtitles.isChecked(),
-                                background_dim=self.background_dim.value()/100,
-                                preset=self.applied_export_preset)
+        result = ExportSettings(
+            aspect=self.aspect.currentText(), resolution=int(self.resolution.currentText()),
+            fps=int(self.fps.currentText()), quality=[18, 20, 25][self.quality.currentIndex()],
+            top_fraction=self.top.value()/100, video_y=self.video_y.value()/100,
+            layout=list(EXPORT_LAYOUTS)[self.export_layout.currentIndex()],
+            gaming_camera=copy.deepcopy(self.gaming_camera), gaming_game=list(self.gaming_game),
+            gaming_fraction=self.gaming_fraction,
+            color=["off", "soft", "bright"][self.color_mode.currentIndex()],
+            normalize_audio=self.normalize_audio.isChecked(), background_dim=self.background_dim.value()/100,
+            preset=self.applied_export_preset)
         result.validate()
         return result
 

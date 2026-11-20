@@ -207,6 +207,14 @@ def clip_proposals(media, segments, settings, left, right):
         ends = sorted({s.end_ms for s in segments[left:right] if earliest <= s.end_ms <= last_end})
         if ends:
             chosen_ends = {ends[0], min(ends, key=lambda end: abs(end - (earliest + last_end) // 2))}
+            if settings.profile != "custom":
+                chosen_ends.add(ends[-1])
+            if settings.profile == "mixed":
+                # Offer short events as well as context-rich stories in the
+                # SAME request. Sampling only min/mid would miss 60–90s stories.
+                for seconds in (30, 60, 75):
+                    goal = start + seconds * 1000
+                    chosen_ends.add(min(ends, key=lambda end: abs(end - goal)))
         else:
             chosen_ends = {earliest, last_end}
         for end in sorted(chosen_ends):
@@ -242,6 +250,9 @@ def decode_choices(items, media, segments, settings, proposals, model_id):
                 if match_score < 70:
                     continue
             span = proposals[number]
+            if settings.profile == "mixed" and span.end_ms - span.start_ms > 60000 and item["category"] != "История":
+                # A short joke must not be padded to fill a longer export.
+                continue
             reason = item["reason"] + f" · начало {scores[0]}/25, событие {scores[1]}/25, эмоция {scores[2]}/25, цельность {scores[3]}/25"
             if settings.query:
                 reason = f"По запросу «{settings.query}»: соответствие {match_score}/100. " + reason
@@ -318,6 +329,7 @@ def build_request(media, segments, settings, left, right, window_count, proposal
         for i, s in enumerate(segments[left:right]))
     prompt += "\n\nДОПУСТИМЫЕ КЛИПЫ (clip_id: начало–конец, номера реплик)\n" + "\n".join(
         f"{i}: {timecode(p.start_ms)}–{timecode(p.end_ms)}, реплики {p.first - left}–{p.last - left}"
+        + (f", длительность {(p.end_ms-p.start_ms)/1000:g} с" if settings.profile == "mixed" else "")
         + (" (граница внутри реплики)" if p.cuts_utterance else "") for i, p in enumerate(proposals))
     schema = {"type": "object", "properties": {"clips": {"type": "array", "maxItems": limit, "items": {"type": "object", "properties": {
         "clip_id": {"type": "integer", "enum": list(range(len(proposals)))},
@@ -374,6 +386,7 @@ def read_candidates(path, media, segments, settings, left, right, model_id):
         if (c.provider != "local-qwen:" + model_id[:12] or c.version < 5
             or not settings.min_seconds * 1000 <= c.end_ms - c.start_ms <= settings.max_seconds * 1000
             or (settings.query and (c.match_score is None or c.match_score < 70))
+            or (settings.profile == "mixed" and c.end_ms - c.start_ms > 60000 and c.category != "История")
             or c.start_ms < segments[left].start_ms
             or c.end_ms > max(s.end_ms for s in segments[left:right])):
             raise ValueError("Кэш содержит несовместимый интервал")

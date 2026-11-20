@@ -8,7 +8,6 @@ from clipnado.export import export_clip
 from clipnado.media import probe
 from clipnado.models import Candidate, ExportSettings, Segment
 from clipnado.process import Cancellation, Cancelled
-from clipnado.subtitles import from_srt
 
 
 def frame(path, tools, at=0, vf=None):
@@ -18,16 +17,16 @@ def frame(path, tools, at=0, vf=None):
     return subprocess.check_output(args + ["-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
 
 
-@pytest.mark.parametrize("aspect,subs", [("9:16", "off"), ("16:9", "srt"), ("1:1", "burn"), ("9:16", "burn"), ("16:9", "burn")])
-def test_real_export(media, tools, tmp_path, aspect, subs):
+@pytest.mark.parametrize("aspect", ["9:16", "16:9", "1:1"])
+def test_real_export(media, tools, tmp_path, aspect):
     c = Candidate(media.source_file_id, 1000, 4000, 80, "История", "Тест")
-    settings = ExportSettings(aspect=aspect, resolution=720, subtitles=subs)
+    settings = ExportSettings(aspect=aspect, resolution=720)
     out = export_clip(media, c, [Segment(500, 5000, "Привет, мир! Это тест кириллицы.")], settings,
                       tmp_path / "Экспорт с пробелом ' тест", tools, Cancellation(), lambda *_: None)
     assert out.exists()
     width, height = settings.dimensions()
     image = frame(out, tools, .2)
-    # Entire lower zone remains black, including when captions are burned into the upper zone.
+    # Entire lower zone remains black, with no animations or caption overlay.
     bottom = image[width * int(height * .50) * 3:]
     assert max(bottom) <= 5
     # Red source's visible rectangle has 16:9 proportions within the upper zone.
@@ -36,17 +35,14 @@ def test_real_export(media, tools, tmp_path, aspect, subs):
     expected_height = min(width / (16 / 9), int(height * .4) // 2 * 2)
     assert abs(len(rows) - expected_height) < 8
     assert abs(probe(out, tools).duration_ms - 3000) <= 100
-    if subs == "srt":
-        segments = from_srt(out.with_suffix(".srt").read_text(encoding="utf-8-sig"), 3000)
-        assert segments[0].start_ms == 0 and segments[0].end_ms == 3000
-        assert "Привет" in segments[0].text
-    else:
-        assert not out.with_suffix(".srt").exists()
-    if subs == "burn":
-        # White Cyrillic glyph pixels in an otherwise red/black frame prove actual subtitle rendering.
-        zone = image[:width * int(height * .4) * 3]
-        whites = sum(1 for r, g, b in zip(zone[::3], zone[1::3], zone[2::3]) if min(r, g, b) > 180)
-        assert whites > 100
+    assert not out.with_suffix(".srt").exists()
+    assert not list(out.parent.glob("*.ass"))
+    # Passing a transcript cannot draw text into the otherwise red/black frame.
+    whites = sum(min(r,g,b) > 180 for r,g,b in zip(image[::3], image[1::3], image[2::3]))
+    assert whites == 0
+    import json
+    data = json.loads(subprocess.check_output([tools.ffprobe, "-v", "error", "-show_streams", "-of", "json", str(out)]))
+    assert all(stream["codec_type"] != "subtitle" for stream in data["streams"])
     # The tone and white flash still begin at exported t≈1 s (source t=2 s).
     raw = subprocess.check_output([tools.ffmpeg, "-v", "error", "-i", str(out), "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"])
     samples = array.array("h", raw)
@@ -85,10 +81,10 @@ def test_export_without_audio_and_reexport(source, tools, tmp_path):
     assert second != out and out.exists()
 
 
-def test_missing_subtitles_fail_before_export(media, tools, tmp_path):
-    with pytest.raises(ValueError, match="нет текста"):
-        export_clip(media, Candidate(media.source_file_id, 0, 1000, 0, "", ""), [], ExportSettings(subtitles="srt"),
-                    tmp_path, tools, Cancellation(), lambda *_: None)
+def test_export_without_transcript(media, tools, tmp_path):
+    out = export_clip(media, Candidate(media.source_file_id, 0, 1000, 0, "", ""), [], ExportSettings(resolution=720),
+                      tmp_path, tools, Cancellation(), lambda *_: None)
+    assert out.exists() and not out.with_suffix(".srt").exists()
 
 
 def test_default_1080_and_shifted_zone(media, tools, tmp_path):
@@ -113,9 +109,9 @@ def test_anamorphic_aspect_is_preserved(tools, tmp_path):
     assert abs(len(rows) - 720 / (32 / 9)) < 6
 
 
-@pytest.mark.parametrize("aspect,subs", [("9:16", "off"), ("1:1", "burn"), ("16:9", "srt")])
-def test_blurred_center_export_geometry_background_and_subtitles(media, tools, tmp_path, aspect, subs):
-    settings = ExportSettings(aspect=aspect, resolution=720, layout="blur_center", subtitles=subs, subtitle_y=.7, background_dim=0)
+@pytest.mark.parametrize("aspect", ["9:16", "1:1", "16:9"])
+def test_blurred_center_export_geometry_background_and_clean_video(media, tools, tmp_path, aspect):
+    settings = ExportSettings(aspect=aspect, resolution=720, layout="blur_center", background_dim=0)
     c = Candidate(media.source_file_id, 1000, 4000, 80, "История", "Тест")
     out = export_clip(media, c, [Segment(500, 5000, "Кириллические субтитры по центру.")], settings,
                       tmp_path / "Размытый фон ' тест", tools, Cancellation(), lambda *_: None)
@@ -127,9 +123,8 @@ def test_blurred_center_export_geometry_background_and_subtitles(media, tools, t
     for y in (int(height*.1),height//2,int(height*.9)):
         pixel = (y*width+width//2)*3
         assert image[pixel] > 150 and image[pixel+1] < 50
-    if subs == "burn":
-        assert sum(1 for r,g,b in zip(image[::3],image[1::3],image[2::3]) if min(r,g,b)>180) > 100
-    if subs == "srt": assert out.with_suffix(".srt").exists()
+    assert not out.with_suffix(".srt").exists()
+    assert sum(min(r,g,b)>180 for r,g,b in zip(image[::3],image[1::3],image[2::3])) == 0
     # Same-source flash remains synchronized in foreground and background.
     during = frame(out, tools, 1.2)
     for y in (int(height*.1), height//2):

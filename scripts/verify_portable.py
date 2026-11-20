@@ -97,6 +97,7 @@ print('PACKAGED_WINDOW_CREATED',flush=True)
 def no_network(*_a,**_kw):raise RuntimeError('Unexpected network connection')
 socket.socket.connect=no_network;socket.create_connection=no_network
 w.media_loaded(probe(Path('demo/demo.mp4'),w.tools));w.show();w.play_candidate()
+assert w.project.search.profile=='mixed' and w.minimum.value()==15 and w.search_settings().max_seconds==90
 print('PACKAGED_VIDEO_PLAY_START',flush=True)
 stage=[0];timer=QTimer()
 def protocol_fixture(args,*_a,**kw):
@@ -176,7 +177,7 @@ def check():
         w.project.candidates[0].export_layout='top_black'
         w.project.segments=[Segment(0,w.project.media.duration_ms,'Проверяем крупные субтитры на русском языке и свободную нижнюю часть.')]
         w.refresh_candidates();w.color_mode.setCurrentIndex(1);w.normalize_audio.setChecked(True)
-        w.readable_subtitles.setChecked(True);w.subtitle_mode.setCurrentIndex(2)
+        assert not hasattr(w, "subtitle_mode") and not hasattr(w, "readable_subtitles")
         w.export_folder.setText(str(Path(sys.argv[1])/'comfort'))
         stage[0]=7;w.export_selected()
     elif stage[0]==7 and w.task_thread is None:
@@ -185,6 +186,10 @@ def check():
         image=QImage.fromData(source_frame(info,400,w.tools,Cancellation()))
         values=[image.pixelColor(x,y).value() for x in range(0,image.width(),5) for y in range(image.height()//2,image.height(),5)]
         assert max(values)<=5
+        white = [image.pixelColor(x,y) for x in range(5,image.width(),10) for y in range(5,image.height()//3,10)]
+        assert not any(min(p.red(),p.green(),p.blue())>180 for p in white)
+        streams=json.loads(run([w.tools.ffprobe,'-v','error','-show_streams','-of','json',str(files[0])]))['streams']
+        assert not any(s['codec_type']=='subtitle' for s in streams)
         from clipnado.projects import save_project,load_project
         save_project(w.project,Path(sys.argv[1])/'comfort.json')
         saved=load_project(Path(sys.argv[1])/'comfort.json')
@@ -193,11 +198,11 @@ def check():
         stage[0]=8;w.preview_export_clip()
     elif stage[0]==8 and w.task_thread is None:
         assert w.export_preview_dialog
-        print('PACKAGED_CAPTION_PREVIEW_OK',flush=True)
+        print('PACKAGED_CLEAN_PREVIEW_OK',flush=True)
         w.close_export_preview()
         identities=[c.id for c in w.project.candidates]
         w.search_profile.setCurrentIndex(w.search_profile.findData('quote'))
-        assert w.minimum.value()==30 and w.search_settings().max_seconds==90 and w.project.search.profile=='quote'
+        assert w.minimum.value()==15 and w.search_settings().max_seconds==60 and w.project.search.profile=='quote'
         assert [c.id for c in w.project.candidates]==identities
         w.export_preset.setCurrentIndex(w.export_preset.findData('dialogue'));w.apply_export_preset()
         assert w.project.candidates[0].export_layout=='top_black'
@@ -212,7 +217,8 @@ def check():
         save_project(w.project,Path(sys.argv[1])/'profiles.json')
         saved=load_project(Path(sys.argv[1])/'profiles.json')
         assert saved.search.profile=='quote' and saved.export.preset=='dialogue'
-        assert saved.export.subtitles=='burn'
+        assert 'subtitles' not in saved.to_dict()['export']
+        assert not list((Path(sys.argv[1])/'comfort').glob('*.srt'))
         w.resolution.setCurrentText('720');assert w.export_settings().preset=='custom'
         print('PACKAGED_MEME_PROFILES_EXPORT_OK',flush=True)
         timer.stop();w.dirty=False;w.close();app.quit()
@@ -236,7 +242,7 @@ result=app.exec();faulthandler.cancel_dump_traceback_later();sys.exit(result)
             "PACKAGED_GAMING_EDITOR_OK",
             "PACKAGED_GAMING_PIXELS_OK",
             "PACKAGED_COMFORT_EXPORT_OK",
-            "PACKAGED_CAPTION_PREVIEW_OK",
+            "PACKAGED_CLEAN_PREVIEW_OK",
             "PACKAGED_MEME_PROFILES_EXPORT_OK",
         )
         if not all(tag in output for tag in required):

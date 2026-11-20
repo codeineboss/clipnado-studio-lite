@@ -161,15 +161,12 @@ class ExportSettings:
     quality: int = 18
     top_fraction: float = 0.4
     video_y: float = 0.0
-    subtitles: str = "off"
-    subtitle_y: float = 0.31
     layout: str = "top_black"
     gaming_camera: list[float] | None = None
     gaming_game: list[float] = field(default_factory=lambda: [0., 0., 1., 1.])
     gaming_fraction: float = .4
     color: str = "off"
     normalize_audio: bool = False
-    readable_subtitles: bool = True
     background_dim: float = .25
     preset: str = "custom"
 
@@ -177,13 +174,13 @@ class ExportSettings:
         from .profiles import EXPORT_PROFILES
         if not isinstance(self.preset, str) or self.preset not in ("custom", *EXPORT_PROFILES):
             raise ValueError("Неизвестный профиль оформления")
-        if not isinstance(self.color, str) or self.color not in ("off", "soft", "bright") or type(self.normalize_audio) is not bool or type(self.readable_subtitles) is not bool:
-            raise ValueError("Неверные настройки изображения, звука или текста")
+        if not isinstance(self.color, str) or self.color not in ("off", "soft", "bright") or type(self.normalize_audio) is not bool:
+            raise ValueError("Неверные настройки изображения или звука")
         if type(self.background_dim) not in (int, float) or not math.isfinite(self.background_dim) or not 0 <= self.background_dim <= .6:
             raise ValueError("Затемнение фона: от 0 до 60%")
         for name in ("resolution", "fps", "quality"):
             setattr(self, name, integer(getattr(self, name), name))
-        if not all(isinstance(x, (float, int)) and math.isfinite(x) for x in (self.top_fraction, self.video_y, self.subtitle_y)):
+        if not all(isinstance(x, (float, int)) and math.isfinite(x) for x in (self.top_fraction, self.video_y)):
             raise ValueError("Некорректные размеры композиции")
         if self.aspect not in ("9:16", "16:9", "1:1") or self.resolution not in (720, 1080):
             raise ValueError("Неверный формат экспорта")
@@ -198,10 +195,6 @@ class ExportSettings:
             raise ValueError("Высота камеры должна быть от 25 до 60%")
         if self.layout == "top_black" and (not 0.2 <= self.top_fraction <= 1 or not 0 <= self.video_y <= 1 - self.top_fraction + 1e-9):
             raise ValueError("Верхняя зона выходит за холст")
-        if self.subtitles not in ("off", "srt", "burn") or not 0 <= self.subtitle_y <= 1:
-            raise ValueError("Неверные настройки субтитров")
-        if self.layout == "top_black" and self.subtitles == "burn" and not self.video_y <= self.subtitle_y < self.video_y + self.top_fraction:
-            raise ValueError("Субтитры должны находиться в зоне видео")
 
     def require_gaming_regions(self):
         self.validate()

@@ -10,14 +10,28 @@ class SearchProfile:
     label: str
     description: str
     instruction: str
+    max_seconds: int = 60
 
 
-SEARCH_PROFILE_VERSION = 4
+SEARCH_PROFILE_VERSION = 6
 
 SEARCH_PROFILES = {
+    "mixed": SearchProfile(
+        "Мемы и истории · авто",
+        "Один поиск: короткие шутки, неожиданные события, реакции и законченные истории. От 15 секунд; до 60 для обычных моментов, до 90 для историй с нужным контекстом.",
+        "Стиль: смешанная подборка из одной записи. Одновременно ищи самостоятельные шутки, неожиданные события, "
+        "реакции и законченные истории. Выбирай длительность по содержанию: короткому моменту достаточно 15–30 секунд; "
+        "для завязки и реакции допустимо до 60. Интервал дольше 60 секунд выбирай ТОЛЬКО для законченной истории "
+        "с категорией История, когда без этого контекста теряется смысл или итог. Не растягивай короткую шутку до истории. "
+        "В одной подборке допустимы разные категории и длительности. Не требуй каждого типа, если его нет в записи. "
+        "Не дублируй одно событие несколькими вариантами. Сохрани причину и результат; исключай пустые паузы, рекламу "
+        "и случайные крики без события. Предпочитай понятность новому зрителю, неожиданный поворот и сильную реакцию. "
+        "Не предсказывай просмотры и не повышай оценки ради количества.",
+        max_seconds=90,
+    ),
     "memes": SearchProfile(
         "Мемы · универсальный",
-        "Понятный смешной эпизод: короткая завязка, событие и реакция. Общий минимум задаётся ниже, общий диапазон — 30–90 секунд.",
+        "Понятный смешной эпизод: короткая завязка, событие и реакция. Стартовый диапазон 15–60 секунд; минимум можно повысить.",
         "Стиль: самостоятельная мемная нарезка. Предпочитай неожиданный ответ, контраст ожидания и результата, "
         "событие с эмоциональной реакцией. Начало должно объяснять ситуацию новому зрителю, конец — сохранять "
         "смешной итог и ответную реакцию. Не выбирай одно восклицание без причины. Не предсказывай просмотры. Не добирай длину пустыми паузами и рекламой.",
@@ -38,10 +52,11 @@ SEARCH_PROFILES = {
     ),
     "story": SearchProfile(
         "Законченный рассказ",
-        "История с завязкой и итогом; длинный контекст оправдан содержанием.",
+        "До 90 секунд, если история требует контекста. Не нужно заполнять всё время.",
         "Стиль: законченный рассказ. Выбирай конкретную историю с понятной завязкой, развитием и итогом. "
         "Сохраняй необходимые объяснения, исключай рекламу, повторное обсуждение и затянутое вступление. "
-        "Не обрезай итог ради эмоциональной фразы посередине.",
+        "Не обрезай итог ради эмоциональной фразы посередине. Не стремись к 90 секундам: сохраняй только необходимый контекст.",
+        max_seconds=90,
     ),
 }
 
@@ -52,13 +67,17 @@ EXPORT_PROFILES = {
 }
 
 
+def maximum_seconds(code):
+    return SEARCH_PROFILES[code].max_seconds if code in SEARCH_PROFILES else 60
+
+
 def search_profile(settings, code):
     if not isinstance(code, str) or code not in SEARCH_PROFILES:
         raise ValueError("Неизвестный профиль поиска")
     result = replace(
         settings,
-        min_seconds=min(90, max(30, settings.min_seconds)),
-        max_seconds=90,
+        min_seconds=min(maximum_seconds(code), max(15, settings.min_seconds)),
+        max_seconds=maximum_seconds(code),
         profile=code,
     )
     result.validate()
@@ -69,10 +88,10 @@ def export_profile(settings, code, media, has_transcript):
     if not isinstance(code, str) or code not in EXPORT_PROFILES:
         raise ValueError("Неизвестный профиль оформления")
     fps = min((24, 25, 30, 50, 60), key=lambda rate: abs(rate - media.fps))
-    layout, subtitle_y = {
-        "gaming": ("gaming_split", 0.28),
-        "dialogue": ("blur_center", 0.58),
-        "story": ("top_black", 0.31),
+    layout = {
+        "gaming": "gaming_split",
+        "dialogue": "blur_center",
+        "story": "top_black",
     }[code]
     # Keep the user's source regions and all per-clip choices. Region selection
     # remains a separate explicit action and is required before gaming export.
@@ -87,11 +106,8 @@ def export_profile(settings, code, media, has_transcript):
         gaming_fraction=0.35 if code == "gaming" else settings.gaming_fraction,
         top_fraction=0.4,
         video_y=0.0,
-        subtitles="burn" if has_transcript else "off",
-        subtitle_y=subtitle_y,
         color="off",
         normalize_audio=True,
-        readable_subtitles=True,
         background_dim=0.3,
     )
     result.validate()

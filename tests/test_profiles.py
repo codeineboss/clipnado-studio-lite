@@ -32,7 +32,11 @@ def test_search_profiles_preserve_goals_and_offer_context(code):
     before = SearchSettings(count=25, target_count=12, min_score=65, query="шутка")
     result = search_profile(before, code)
     p = SEARCH_PROFILES[code]
-    assert (result.min_seconds, result.max_seconds, result.profile) == (60, 90, code)
+    assert (result.min_seconds, result.max_seconds, result.profile) == (
+        60,
+        90 if code in ("story", "mixed") else 60,
+        code,
+    )
     assert (result.count, result.target_count, result.min_score, result.query) == (
         25,
         12,
@@ -73,11 +77,7 @@ def test_export_profiles_preserve_regions_and_choose_quality(code, fps, expected
         18,
         "9:16",
     )
-    assert (
-        result.subtitles == "burn"
-        and result.readable_subtitles
-        and result.normalize_audio
-    )
+    assert result.normalize_audio
     assert result.preset == code
     assert (
         result.gaming_camera == before.gaming_camera
@@ -90,7 +90,7 @@ def test_export_profiles_preserve_regions_and_choose_quality(code, fps, expected
         assert result.layout == "blur_center" and result.background_dim == 0.3
     else:
         assert result.layout == "top_black" and result.video_y == 0
-    assert export_profile(before, code, source, False).subtitles == "off"
+    assert export_profile(before, code, source, False) == result
 
 
 def test_profile_roundtrip_legacy_and_invalid_names(media, tmp_path):
@@ -164,7 +164,7 @@ def test_profile_cache_is_separate_and_reused(tmp_path, monkeypatch):
     or not os.environ.get("CLIPNADO_TEST_QWEN"),
     reason="Set actual local Qwen paths",
 )
-def test_actual_qwen_meme_profile_minimum_30_seconds_and_cache(tmp_path, monkeypatch):
+def test_actual_qwen_mixed_short_meme_and_long_story_and_cache(tmp_path, monkeypatch):
     tools = Tools(
         llama=os.environ["CLIPNADO_TEST_LLAMA"],
         semantic_model=os.environ["CLIPNADO_TEST_QWEN"],
@@ -172,55 +172,100 @@ def test_actual_qwen_meme_profile_minimum_30_seconds_and_cache(tmp_path, monkeyp
         acceleration="cpu",
     )
     dialogue = [
-        (0, 6000, "Всем привет, подождём остальных зрителей, я пока включу игру."),
+        (0, 6000, "Всем привет, начинаем стрим. Пока подождём зрителей."),
         (
             6000,
             12000,
-            "Я сейчас покажу самый безопасный способ пройти эту яму. С первого раза, учитесь у мастера!",
+            "Сейчас покажу идеальный прыжок. Я профессионал, здесь невозможно упасть!",
         ),
         (
             12000,
             18000,
-            "До края нужно идти медленно. Я здесь всё изучил, тут вообще невозможно упасть.",
+            "Разбегаюсь, прыгаю... Ааа, я снова упал в яму! Только что всех учил и сам всё провалил!",
         ),
         (
             18000,
             24000,
-            "Главное не нажать прыжок слишком рано. В прошлый раз я просто торопился, а сейчас всё рассчитал.",
+            "Ахаха, спасибо, профессионал! Теперь мы точно знаем, как делать не надо. Всё, больше никого не учу!",
         ),
         (
             24000,
             30000,
-            "Теперь смотрите: разбегаюсь, прыгаю, перелетаю... Ой, почему я лечу вниз?!",
+            "Рекламная пауза: магазин, ссылка в описании и скидка по промокоду.",
         ),
         (
             30000,
             36000,
-            "Я опять упал в самое начало! Полчаса вас учил, а сам не смог перепрыгнуть одну яму!",
+            "Вспомнил одну историю. Как я случайно стал ведущим чужой свадьбы. Без начала тут вообще непонятно.",
         ),
         (
             36000,
             42000,
-            "Спасибо, мастер. Теперь мы точно знаем, как делать не надо. Показывай ещё один безопасный способ!",
+            "Друг попросил забрать его костюм из химчистки и довезти до ресторана. Я согласился, адрес он прислал.",
         ),
         (
             42000,
             48000,
-            "Ахаха, ладно, больше не буду учить вас прыгать. Давайте лучше вы меня научите.",
+            "На входе стояла администратор. Увидела мужчину с костюмом и сразу сказала: наконец-то, мы вас ждали.",
         ),
         (
             48000,
+            54000,
+            "Я решил, что это про доставку. Она провела меня в зал, дала микрофон и убежала встречать гостей.",
+        ),
+        (
+            54000,
             60000,
-            "А теперь реклама магазина. Ссылка в описании, скидка по промокоду. Сейчас расскажу про товары.",
+            "Я хотел объяснить, но в этот момент заиграла музыка и весь зал начал хлопать. Передо мной стояли молодожёны.",
+        ),
+        (
+            60000,
+            66000,
+            "Жених сказал: наш ведущий опоздал, хорошо что прислали замену. А я даже не знал имён жениха и невесты.",
+        ),
+        (
+            66000,
+            72000,
+            "Гости ждали тост. Я растерялся и сказал: главное в браке вовремя возвращать чужие вещи. Все засмеялись.",
+        ),
+        (
+            72000,
+            78000,
+            "Меня попросили провести конкурс. Я объявил соревнование: кто быстрее найдёт настоящий адрес ресторана.",
+        ),
+        (
+            78000,
+            84000,
+            "Тут позвонил мой друг: ты где? Оказалось, я перепутал корпус, его ресторан был в соседнем здании.",
+        ),
+        (
+            84000,
+            90000,
+            "Именно тогда в зал зашёл настоящий ведущий. Я думал, теперь меня выгонят, и приготовился объясняться.",
+        ),
+        (
+            90000,
+            96000,
+            "Но невеста сказала: этого оставляем, он смешнее. Мне заплатили за вечер, а костюм я всё-таки доставил.",
+        ),
+        (
+            96000,
+            102000,
+            "Самое смешное: через год эта пара позвала меня на годовщину. Так доставка костюма превратилась в подработку.",
+        ),
+        (
+            102000,
+            108000,
+            "История закончилась. А теперь снова реклама магазина, скидки и промокоды, ссылка в описании.",
         ),
     ]
     segments = [Segment(*row) for row in dialogue]
     media = MediaInfo(
-        "authored-meme.mp4", "actual-meme-profile-30", 60000, 1920, 1080, 30, True
+        "authored-mixed.mp4", "actual-mixed-profile", 108000, 1920, 1080, 30, True
     )
     settings = search_profile(
-        SearchSettings(count=6, target_count=1, min_seconds=30, max_seconds=90),
-        "quote",
+        SearchSettings(count=6, target_count=2, min_seconds=15, max_seconds=90),
+        "mixed",
     )
     provider = LocalModelProvider(tools)
     result = provider.analyze(
@@ -228,15 +273,20 @@ def test_actual_qwen_meme_profile_minimum_30_seconds_and_cache(tmp_path, monkeyp
     )
     assert result.info["complete"] and result.candidates
     assert all(
-        30000 <= c.end_ms - c.start_ms <= 90000 and c.provider.startswith("local-qwen:")
+        15000 <= c.end_ms - c.start_ms <= 90000 and c.provider.startswith("local-qwen:")
         for c in result.candidates
     )
-    # The failed jump and the streamer's spoken reaction end at 36 s;
-    # later banter is optional, while greetings and advertising are excluded.
+    intervals = [(c.start_ms, c.end_ms, c.category) for c in result.candidates]
     assert any(
-        6000 <= c.start_ms <= 18000 and 36000 <= c.end_ms <= 48000
+        6000 <= c.start_ms <= 12000 and 18000 <= c.end_ms <= 24000
         for c in result.candidates
-    ), [(c.start_ms, c.end_ms) for c in result.candidates]
+    ), intervals
+    assert any(
+        30000 <= c.start_ms <= 36000
+        and 96000 <= c.end_ms <= 102000
+        and c.category == "История"
+        for c in result.candidates
+    ), intervals
 
     def repeated(*_a, **_k):
         pytest.fail("Repeated actual Qwen inference")
@@ -323,3 +373,139 @@ def test_legacy_qwen_cache_ignores_retired_animation_plan(tmp_path):
         "legacy-model",
     )
     assert result[0].id == c.id and not hasattr(result[0], "animation_plan")
+
+
+def test_story_profile_keeps_context_above_regular_limit():
+    from clipnado.local_llm import decode_choices
+
+    source = MediaInfo("story", "story", 96000, 1920, 1080, 30, True)
+    segments = [
+        Segment(i * 6000, (i + 1) * 6000, "Продолжение одной истории номер " + str(i))
+        for i in range(16)
+    ]
+    regular = search_profile(SearchSettings(min_seconds=15), "memes")
+    story = search_profile(SearchSettings(min_seconds=15), "story")
+    a = build_request(source, segments, regular, 0, len(segments), 1)
+    b = build_request(source, segments, story, 0, len(segments), 1)
+    assert all(15000 <= p.end_ms - p.start_ms <= 60000 for p in a.proposals)
+    long = next(i for i, p in enumerate(b.proposals) if p.end_ms - p.start_ms > 60000)
+    item = dict(
+        clip_id=long,
+        hook=20,
+        event=20,
+        emotion=20,
+        completeness=20,
+        category="История",
+        reason="Для итога нужен контекст",
+    )
+    chosen = decode_choices([item], source, segments, story, b.proposals, "model")
+    assert 60000 < chosen[0].end_ms - chosen[0].start_ms <= 90000
+    with pytest.raises(ValueError):
+        decode_choices([item], source, segments, regular, b.proposals, "model")
+
+
+@pytest.mark.parametrize("mode", ["srt", "burn"])
+def test_retired_subtitles_migrate_and_export_clean_video(media, tools, tmp_path, mode):
+    from clipnado.export import export_clip
+    from test_export import frame
+
+    c = Candidate(
+        media.source_file_id, 1000, 4000, 85, "Юмор", "Сохранённый клип", selected=True
+    )
+    segments = [Segment(0, 8000, "Этот текст нужен только для смыслового поиска.")]
+    data = Project(
+        media, segments=segments, candidates=[c], export=ExportSettings(resolution=720)
+    ).to_dict()
+    data["export"].update(subtitles=mode, subtitle_y=0.31, readable_subtitles=True)
+    path = tmp_path / "old-captions.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    restored = load_project(path)
+    assert restored.segments == segments and restored.candidates == [c]
+    save_project(restored, tmp_path / "new.json")
+    saved = json.loads((tmp_path / "new.json").read_text(encoding="utf-8"))
+    assert (
+        not {"subtitles", "subtitle_y", "readable_subtitles"} & saved["export"].keys()
+    )
+    out = export_clip(
+        media,
+        c,
+        restored.segments,
+        restored.export,
+        tmp_path / "out",
+        tools,
+        Cancellation(),
+        lambda *_: None,
+    )
+    assert not list(out.parent.glob("*.srt")) and not list(out.parent.glob("*.ass"))
+    image = frame(out, tools, 0.3)
+    assert (
+        sum(min(r, g, b) > 180 for r, g, b in zip(image[::3], image[1::3], image[2::3]))
+        == 0
+    )
+
+
+def test_mixed_request_offers_short_events_and_long_stories_together():
+    from clipnado.local_llm import decode_choices
+
+    source = MediaInfo("mixed", "mixed", 180000, 1920, 1080, 30, True)
+    segments = [
+        Segment(i * 6000, (i + 1) * 6000, "Реплика номер " + str(i)) for i in range(30)
+    ]
+    settings = search_profile(SearchSettings(min_seconds=15), "mixed")
+    request = build_request(source, segments, settings, 0, len(segments), 1)
+    short = next(
+        i
+        for i, p in enumerate(request.proposals)
+        if 15000 <= p.end_ms - p.start_ms <= 30000
+    )
+    long = next(
+        i
+        for i, p in enumerate(request.proposals)
+        if 60000 < p.end_ms - p.start_ms <= 90000
+    )
+    item = dict(hook=20, event=20, emotion=20, completeness=20, reason="Цельный эпизод")
+    # The category shown in the existing results table also enforces the
+    # exception for longer stories. A joke cannot silently become a 90s clip.
+    assert not decode_choices(
+        [dict(item, clip_id=long, category="Юмор")],
+        source,
+        segments,
+        settings,
+        request.proposals,
+        "model",
+    )
+    accepted = decode_choices(
+        [
+            dict(item, clip_id=short, category="Юмор"),
+            dict(item, clip_id=long, category="История"),
+        ],
+        source,
+        segments,
+        settings,
+        request.proposals,
+        "model",
+    )
+    assert [c.category for c in accepted] == ["Юмор", "История"]
+    assert "длительность" in request.prompt
+    assert (
+        request.schema["properties"]["clips"]["items"]["properties"]["category"]["enum"]
+        == settings.categories
+    )
+
+
+def test_mixed_selection_keeps_stronger_story_instead_of_filling_quota():
+    from clipnado.selection import choose_candidates
+
+    settings = search_profile(SearchSettings(min_seconds=15, target_count=3), "mixed")
+    story = Candidate(
+        "mixed", 0, 78000, 95, "История", "Завязка и неожиданный итог", "Полная история"
+    )
+    shorts = [
+        Candidate("mixed", a, a + 24000, 65, "Реакция", "Часть истории", str(a))
+        for a in (0, 30000, 54000)
+    ]
+    meme = Candidate(
+        "mixed", 90000, 114000, 85, "Юмор", "Отдельная шутка", "Другой момент"
+    )
+    result = choose_candidates([*shorts, story, meme], settings, Cancellation())
+    assert [c.id for c in result] == [story.id, meme.id]

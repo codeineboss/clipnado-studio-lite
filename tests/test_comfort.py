@@ -8,7 +8,6 @@ from clipnado.export import composition_frame, export_clip
 from clipnado.media import probe
 from clipnado.models import Candidate, ExportSettings, Segment
 from clipnado.process import Cancellation
-from clipnado.subtitles import readable_segments, to_ass
 from test_export import frame
 
 
@@ -25,24 +24,6 @@ def candidate(media):
     )
 
 
-def test_readable_captions_preserve_text_two_lines_and_bounds():
-    text = " ".join(
-        [
-            "Эта реплика содержит много слов, чтобы проверить разбиение длинных субтитров без потери содержания."
-        ]
-        * 5
-    )
-    cards = readable_segments([Segment(50, 6050, text)])
-    assert len(cards) > 2 and cards[0].start_ms == 50 and cards[-1].end_ms == 6050
-    assert all(a.end_ms == b.start_ms for a, b in zip(cards, cards[1:]))
-    assert all(
-        0 < c.end_ms - c.start_ms and len(c.text.splitlines()) <= 2 for c in cards
-    )
-    assert " ".join(" ".join(c.text.split()) for c in cards) == text
-    ass = to_ass(cards, 1080, 1920, 0.31, readable=True)
-    assert "\\N" in ass and "WrapStyle: 2" in ass
-
-
 def test_real_comfort_export_preview_sync_and_empty_lower_zone(media, tools, tmp_path):
     from PySide6.QtGui import QImage
 
@@ -51,7 +32,6 @@ def test_real_comfort_export_preview_sync_and_empty_lower_zone(media, tools, tmp
         resolution=720,
         color="soft",
         normalize_audio=True,
-        subtitles="burn",
     )
     segments = [
         Segment(

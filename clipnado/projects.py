@@ -39,8 +39,9 @@ def load_project(path: Path) -> Project:
         search.setdefault("target_count", min(10, search.get("count", 15)))
         export = dict(data.get("export", {}))
         retired_animation = export.pop("animation", "off")
-        # Old saved projects keep their original appearance.
-        export.setdefault("readable_subtitles", False)
+        # Retired text settings cannot re-enable captions; preserve source regions/colors.
+        for retired in ("subtitles", "subtitle_y", "readable_subtitles"):
+            export.pop(retired, None)
         export.setdefault("background_dim", 0.)
         export.pop("tiktok_tracking", None)
         migrated = export.get("layout") == "tt_fill"
@@ -67,11 +68,11 @@ def load_project(path: Path) -> Project:
                           query_results=[candidate_from_dict(c) for c in data.get("query_results", [])],
                           last_query=data.get("last_query", ""), query_info=data.get("query_info", {}))
         project.validate()
-        if project.search.min_seconds < 30:
-            project.search.min_seconds = 30
+        if project.search.min_seconds < 15:
+            project.search.min_seconds = 15
             if project.search.max_seconds is not None:
-                project.search.max_seconds = max(30, project.search.max_seconds)
-            warning = "Минимальная длина автоматического поиска поднята до 30 секунд. Существующие клипы сохранены."
+                project.search.max_seconds = max(15, project.search.max_seconds)
+            warning = "Минимальная длина автоматического поиска поднята до 15 секунд. Существующие клипы сохранены."
             if warning not in project.warnings:
                 project.warnings.append(warning)
         return project

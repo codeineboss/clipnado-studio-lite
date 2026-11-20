@@ -13,10 +13,9 @@ from clipnado.projects import load_project, save_project
 from scripts.gaming_smoke import CAMERA, GAME
 
 
-@pytest.mark.parametrize("subs", ["off", "srt", "burn"])
 @pytest.mark.parametrize("fps", [30, 60])
-def test_gaming_real_export_camera_game_audio_and_subtitles(
-    gaming_source, tools, tmp_path, subs, fps
+def test_gaming_real_export_camera_game_audio_and_clean_video(
+    gaming_source, tools, tmp_path, fps
 ):
     from test_export import frame
 
@@ -34,8 +33,6 @@ def test_gaming_real_export_camera_game_audio_and_subtitles(
         aspect="1:1",
         resolution=720,
         fps=fps,
-        subtitles=subs,
-        subtitle_y=0.8,
         gaming_camera=CAMERA,
         gaming_game=GAME,
     )
@@ -75,8 +72,8 @@ def test_gaming_real_export_camera_game_audio_and_subtitles(
     whites = sum(
         min(r, g, b) > 180 for r, g, b in zip(before[::3], before[1::3], before[2::3])
     )
-    assert whites > 100 if subs == "burn" else whites == 0
-    assert out.with_suffix(".srt").exists() == (subs == "srt")
+    assert whites == 0
+    assert not out.with_suffix(".srt").exists()
     samples = array.array(
         "h",
         subprocess.check_output(

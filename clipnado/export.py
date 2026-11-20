@@ -9,7 +9,6 @@ from pathlib import Path
 from .media import Tools, require_space
 from .models import Candidate, ExportSettings, MediaInfo, Segment
 from .process import Cancellation, Progress, run
-from .subtitles import clip_segments, readable_segments, to_ass, to_srt
 from .comfort import audio_filter, color_filter
 
 
@@ -79,11 +78,6 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
     settings = clip_export_settings(settings, candidate)
     settings.require_gaming_regions()
     token.check()
-    subtitles = clip_segments(segments, candidate.start_ms, candidate.end_ms)
-    if settings.subtitles != "off" and not subtitles:
-        raise ValueError("В выбранном интервале нет текста для субтитров. Импортируйте SRT или выберите «Выключены».")
-    if settings.readable_subtitles:
-        subtitles = readable_segments(subtitles)
     folder = Path(folder).resolve()
     duration = candidate.end_ms - candidate.start_ms
     # Conservative high-quality H.264 estimate; FFmpeg's actual disk errors are also surfaced.
@@ -108,13 +102,6 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
         with tempfile.TemporaryDirectory(prefix=".clipnado-", dir=folder) as tmp:
             stage = Path(tmp)
             vf = video_filter(settings)
-            if settings.subtitles == "burn":
-                width, height = settings.dimensions()
-                (stage / "subs.ass").write_text(to_ass(subtitles, width, height, settings.subtitle_y,
-                                                        settings.video_y if settings.layout == "top_black" else 0,
-                                                        settings.top_fraction if settings.layout == "top_black" else 1, settings.readable_subtitles), encoding="utf-8-sig")
-                # Relative ASCII filter paths work with Windows drives, Cyrillic folders and apostrophes.
-                vf += ",ass=filename=subs.ass"
             af = audio_filter(media, candidate, settings, tools, token, progress)
             args = [tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{candidate.start_ms / 1000:.3f}",
                     "-i", media.path]
@@ -126,17 +113,8 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
             progress(99, "Проверка MP4…")
             validate_export(stage / "clip.mp4", tools, settings, duration, media.has_audio, token)
             token.check()
-            # Publish only validated files. Roll back sidecar if the MP4 commit fails.
-            sidecar = target.with_suffix(".srt")
-            if settings.subtitles == "srt":
-                (stage / "clip.srt").write_text(to_srt(subtitles), encoding="utf-8-sig")
-                os.replace(stage / "clip.srt", sidecar)
-            try:
-                os.replace(stage / "clip.mp4", target)
-            except Exception:
-                if settings.subtitles == "srt":
-                    sidecar.unlink(missing_ok=True)
-                raise
+            # Publish only the validated MP4.
+            os.replace(stage / "clip.mp4", target)
             return target
     finally:
         if lock:
@@ -145,7 +123,7 @@ def export_clip(media: MediaInfo, candidate: Candidate, segments: list[Segment],
 
 def composition_frame(media: MediaInfo, candidate: Candidate, settings: ExportSettings,
                       tools: Tools, token: Cancellation, segments: list[Segment] | None = None) -> bytes:
-    """Render the export geometry, color and optional burned captions."""
+    """Render the same clean video geometry and color as the final MP4."""
     candidate.validate(media)
     settings = clip_export_settings(settings, candidate)
     at = min(candidate.start_ms + 1000, (candidate.start_ms + candidate.end_ms) // 2)
@@ -158,15 +136,6 @@ def composition_frame(media: MediaInfo, candidate: Candidate, settings: ExportSe
         for position in (at, previous):
             vf = video_filter(settings)
             args = [tools.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{position / 1000:.3f}", "-i", media.path]
-            if settings.subtitles == "burn" and segments is not None:
-                captions = clip_segments(segments, candidate.start_ms, candidate.end_ms)
-                if settings.readable_subtitles:
-                    captions = readable_segments(captions)
-                width, height = settings.dimensions()
-                (Path(tmp) / "subs.ass").write_text(to_ass(captions, width, height, settings.subtitle_y,
-                    settings.video_y if settings.layout == "top_black" else 0,
-                    settings.top_fraction if settings.layout == "top_black" else 1, settings.readable_subtitles), encoding="utf-8-sig")
-                vf += f",setpts=PTS+{max(0, position-candidate.start_ms)/1000:.3f}/TB,ass=filename=subs.ass,setpts=PTS-STARTPTS"
             vf += ",scale=360:640:force_original_aspect_ratio=decrease"
             args += ["-filter_threads", str(tools.threads), "-vf", vf, "-map", "0:v:0"]
             run(args + ["-an", "-sn", "-dn", "-frames:v", "1", "-threads", str(tools.threads), str(path)], token, cwd=Path(tmp), timeout=60)

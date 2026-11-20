@@ -16,7 +16,7 @@ from clipnado.media import Tools, probe
 from clipnado.models import Candidate, ExportSettings, MediaInfo, Project, SearchSettings, Segment, parse_time, timecode
 from clipnado.process import Cancellation, Cancelled, run
 from clipnado.projects import load_project, save_project
-from clipnado.subtitles import clip_segments, from_srt, to_ass, to_srt
+from clipnado.transcript_io import from_srt
 
 
 @pytest.mark.parametrize("ms", [0, 1, 1234, 3661123, 18000000])
@@ -119,14 +119,11 @@ def test_bad_file(tmp_path, tools):
         probe(path, tools)
 
 
-def test_srt_clipping():
-    original = [Segment(900, 2100, "Привет, мир!"), Segment(2500, 4500, "Конец.")]
-    clipped = clip_segments(original, 1000, 4000)
-    assert clipped == [Segment(0, 1100, "Привет, мир!"), Segment(1500, 3000, "Конец.")]
-    assert clip_segments(list(reversed(original)), 1000, 4000) == clipped
-    assert from_srt(to_srt(clipped), 3000) == clipped
-    ass = to_ass(clipped, 720, 1280, .31)
-    assert "0:00:00.00" in ass and "Привет" in ass
+def test_srt_transcript_import():
+    text = "2\n00:00:01,500 --> 00:00:03,000\nКонец.\n\n1\n00:00:00,000 --> 00:00:01,100\nПривет, мир!\n"
+    assert from_srt(text, 3000) == [Segment(0, 1100, "Привет, мир!"), Segment(1500, 3000, "Конец.")]
+    with pytest.raises(ValueError):
+        from_srt(text, 2000)
 
 
 def test_deduplicate():

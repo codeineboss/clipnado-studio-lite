@@ -59,7 +59,6 @@ def test_gui_manual_export_edit_and_save(app, window, media, tmp_path, monkeypat
     window.transcript.item(0, 2).setText("Исправленный текст")
     assert window.project.segments[0].text == "Исправленный текст"
     window.resolution.setCurrentText("720")
-    window.subtitle_mode.setCurrentText("Отдельный SRT")
     window.export_folder.setText(str(tmp_path / "results"))
     ticks = []
     timer = QTimer()
@@ -72,7 +71,9 @@ def test_gui_manual_export_edit_and_save(app, window, media, tmp_path, monkeypat
     timer.stop()
     assert len(ticks) >= 5, "GUI was blocked during export"
     assert list((tmp_path / "results").glob("*.mp4"))
-    assert "Исправленный" in next((tmp_path / "results").glob("*.srt")).read_text(encoding="utf-8-sig")
+    assert not list((tmp_path / "results").glob("*.srt"))
+    assert window.project.segments[0].text == "Исправленный текст"
+    assert not hasattr(window, "subtitle_mode") and not hasattr(window, "readable_subtitles")
     # Change clip limits and export again, reusing transcript and no provider call.
     window.table.item(0, 2).setText("00:00:02.500")
     window.export_selected()
@@ -148,7 +149,7 @@ def test_local_only_ui_and_analysis_work_without_network(app, window, long_media
     wait_task(app, window)
     assert window.project.candidates and window.project.analysis_info["network_used"] is False
     assert window.project.analysis_info["mode"] == "local-qwen"
-    assert all(c.end_ms-c.start_ms>=30000 for c in window.project.candidates)
+    assert all(c.end_ms-c.start_ms>=15000 for c in window.project.candidates)
     assert window.search_settings().max_seconds == 90
 
 
@@ -422,7 +423,7 @@ def test_mixed_export_validates_all_clips_before_creating_files(app, window, med
     window.refresh_candidates()
     window.export_layout.setCurrentIndex(1)
     assert window.top.isEnabled(), 'An individually selected upper-zone layout still needs its controls'
-    window.subtitle_mode.setCurrentIndex(2);window.subtitle_y.setValue(80)
+    window.top.setValue(80);window.video_y.setValue(50)
     window.export_folder.setText(str(tmp_path/'invalid-mixed'))
     window.export_selected()
     assert window.task_thread is None and window.errors and '00:00:04.000' in str(window.errors[0])
@@ -532,9 +533,8 @@ def test_comfort_controls_preview_export_and_project_roundtrip(app, window, medi
     window.project.segments=[Segment(0,8000,'Крупные субтитры на русском языке без потери слов и смысла.')]
     window.refresh_candidates()
     window.resolution.setCurrentText('720');window.color_mode.setCurrentIndex(1)
-    window.normalize_audio.setChecked(True);window.readable_subtitles.setChecked(True)
+    window.normalize_audio.setChecked(True)
     window.background_dim.setValue(35)
-    window.subtitle_mode.setCurrentIndex(2)
     window.preview_export_clip();assert not window.comfort_group.isEnabled()
     wait_task(app,window)
     assert window.export_preview_dialog and not hasattr(window, "animation_mode")
@@ -556,12 +556,12 @@ def test_search_profiles_new_defaults_change_without_analysis_and_restore_legacy
     from clipnado.models import Candidate
     from clipnado.projects import load_project,save_project
     window.media_loaded(media)
-    assert window.search_settings().profile=='memes'
-    assert window.minimum.value()==30 and window.search_settings().max_seconds == 90
+    assert window.search_settings().profile=='mixed'
+    assert window.minimum.value()==15 and window.search_settings().max_seconds == 90
     c=Candidate(media.source_file_id,0,3000,80,'Юмор','Существующий клип',selected=True)
     window.project.candidates=[c];window.refresh_candidates()
     window.search_profile.setCurrentIndex(window.search_profile.findData('quote'))
-    assert window.minimum.value()==30 and window.search_settings().max_seconds == 90
+    assert window.minimum.value()==15 and window.search_settings().max_seconds == 60
     assert window.project.candidates==[c] and window.task_thread is None
     # Manual duration overrides survive roundtrip without reapplying defaults.
     window.minimum.setValue(35);window.project.search=window.search_settings()
@@ -571,10 +571,10 @@ def test_search_profiles_new_defaults_change_without_analysis_and_restore_legacy
     data=window.project.to_dict();data['search'].pop('profile');data['search'].update(min_seconds=60,max_seconds=90)
     data['export'].pop('preset');path.write_text(json.dumps(data),encoding='utf-8')
     window.project=load_project(path);window.load_ui()
-    assert window.search_profile.currentData()=='custom' and window.minimum.value()==60 and window.search_settings().max_seconds == 90
+    assert window.search_profile.currentData()=='custom' and window.minimum.value()==60 and window.search_settings().max_seconds == 60
     data['search'].update(min_seconds=8,max_seconds=20);path.write_text(json.dumps(data),encoding='utf-8')
     window.project=load_project(path);window.load_ui()
-    assert window.minimum.value()==30 and window.search_settings().max_seconds==90
+    assert window.minimum.value()==15 and window.search_settings().max_seconds==60
     assert window.project.candidates[0].id==c.id and window.task_thread is None
 
 
@@ -593,7 +593,7 @@ def test_export_profiles_apply_preserve_individual_choices_and_roundtrip(app,win
     settings=window.export_settings()
     assert settings.preset=='gaming' and settings.layout=='gaming_split' and settings.gaming_fraction==.35
     assert (settings.resolution,settings.fps,settings.quality)==(1080,30,18)
-    assert settings.normalize_audio and settings.readable_subtitles and settings.subtitles=='burn'
+    assert settings.normalize_audio
     assert settings.gaming_camera==CAMERA and settings.gaming_game==GAME
     assert [c.export_layout for c in window.project.candidates]==[None,'blur_center'] and window.boundary_undo
     path=tmp_path/'preset.json';save_project(window.project,path)
@@ -609,7 +609,7 @@ def test_export_profiles_apply_preserve_individual_choices_and_roundtrip(app,win
     assert window.gaming_camera==CAMERA
 
 
-def test_export_profile_real_mp4_subtitles_and_missing_camera_preflight(app,window,media,tmp_path):
+def test_export_profile_real_mp4_clean_video_and_missing_camera_preflight(app,window,media,tmp_path):
     from clipnado.models import Candidate
     window.media_loaded(media)
     window.project.candidates=[Candidate(media.source_file_id,1000,4000,80,'Юмор','Мем',selected=True)]
@@ -622,4 +622,19 @@ def test_export_profile_real_mp4_subtitles_and_missing_camera_preflight(app,wind
     window.export_preset.setCurrentIndex(window.export_preset.findData('dialogue'));window.apply_export_preset()
     window.export_selected();wait_task(app,window,60)
     assert len(list((tmp_path/'out').glob('*.mp4')))==1
-    assert window.project.export.preset=='dialogue' and window.project.export.subtitles=='burn'
+    assert window.project.export.preset=='dialogue' and not list((tmp_path/'out').glob('*.srt'))
+
+
+def test_search_story_switch_updates_upper_limit_without_losing_clips(app,window,media):
+    from clipnado.models import Candidate
+    window.media_loaded(media)
+    c=Candidate(media.source_file_id,0,3000,80,'Юмор','Существующий клип',selected=True)
+    window.project.candidates=[c]
+    window.minimum.setValue(25)
+    window.search_profile.setCurrentIndex(window.search_profile.findData('story'))
+    assert window.minimum.value()==25 and window.search_settings().max_seconds==90
+    assert '90' in window.search_maximum.text()
+    window.minimum.setValue(75)
+    window.search_profile.setCurrentIndex(window.search_profile.findData('memes'))
+    assert window.minimum.value()==60 and window.search_settings().max_seconds==60
+    assert window.project.candidates==[c] and window.task_thread is None
