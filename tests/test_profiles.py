@@ -203,9 +203,12 @@ def test_actual_qwen_short_meme_profile_and_cache(tmp_path, monkeypatch):
         8000 <= c.end_ms - c.start_ms <= 20000 and c.provider.startswith("local-qwen:")
         for c in result.candidates
     )
-    assert any(c.start_ms <= 7000 and c.end_ms >= 17000 for c in result.candidates), [
-        (c.start_ms, c.end_ms) for c in result.candidates
-    ]
+    # The promise and the streamer's own spoken reaction end at 13 s.
+    # The other participant's later joke is optional, not a required boundary.
+    assert any(
+        4000 <= c.start_ms <= 7000 and 13000 <= c.end_ms <= 21000
+        for c in result.candidates
+    ), [(c.start_ms, c.end_ms) for c in result.candidates]
 
     def repeated(*_a, **_k):
         pytest.fail("Repeated actual Qwen inference")
