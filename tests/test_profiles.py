@@ -244,7 +244,7 @@ def test_retired_animations_migrate_without_changing_clips_and_export_black(
         restored.candidates[0], "animation_plan"
     )
     save_project(restored, tmp_path / "new.json")
-    saved = json.loads((tmp_path / "new.json").read_text())
+    saved = json.loads((tmp_path / "new.json").read_text(encoding="utf-8"))
     assert (
         "animation" not in saved["export"]
         and "animation_plan" not in saved["query_results"][0]
