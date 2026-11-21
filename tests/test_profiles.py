@@ -272,6 +272,9 @@ def test_actual_qwen_mixed_short_meme_and_long_story_and_cache(tmp_path, monkeyp
         media, segments, settings, tmp_path / "cache", Cancellation(), lambda *_: None
     )
     assert result.info["complete"] and result.candidates
+    assert (
+        result.info["max_prompt_tokens"] <= 3200
+    ), "Repeated timecodes overloaded the mixed request"
     assert all(
         15000 <= c.end_ms - c.start_ms <= 90000 and c.provider.startswith("local-qwen:")
         for c in result.candidates
@@ -487,6 +490,7 @@ def test_mixed_request_offers_short_events_and_long_stories_together():
     )
     assert [c.category for c in accepted] == ["Юмор", "История"]
     assert "длительность" in request.prompt
+    assert all(s.text in request.prompt for s in segments)
     assert (
         request.schema["properties"]["clips"]["items"]["properties"]["category"]["enum"]
         == settings.categories

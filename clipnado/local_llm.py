@@ -324,13 +324,22 @@ def build_request(media, segments, settings, left, right, window_count, proposal
                    "Общая цель числа клипов не оправдывает неподходящие совпадения.")
     if instruction:
         system += " " + instruction
-    prompt = "РАСШИФРОВКА\n" + "\n".join(
-        f"{i} [{timecode(s.start_ms)}–{timecode(s.end_ms)}] {s.text}"
-        for i, s in enumerate(segments[left:right]))
-    prompt += "\n\nДОПУСТИМЫЕ КЛИПЫ (clip_id: начало–конец, номера реплик)\n" + "\n".join(
-        f"{i}: {timecode(p.start_ms)}–{timecode(p.end_ms)}, реплики {p.first - left}–{p.last - left}"
-        + (f", длительность {(p.end_ms-p.start_ms)/1000:g} с" if settings.profile == "mixed" else "")
-        + (" (граница внутри реплики)" if p.cuts_utterance else "") for i, p in enumerate(proposals))
+    if settings.profile == "mixed":
+        # Timecodes stay in the validated local proposal map. The model only
+        # needs row coverage and duration to choose an ID; repeating two full
+        # timestamps for every alternative wastes most of the CPU context.
+        prompt = "РАСШИФРОВКА (номер реплики: текст)\n" + "\n".join(
+            f"{i}: {s.text}" for i, s in enumerate(segments[left:right]))
+        prompt += "\n\nДОПУСТИМЫЕ КЛИПЫ (clip_id: первая–последняя реплика; длительность в секундах)\n" + "\n".join(
+            f"{i}: {p.first-left}–{p.last-left}; {(p.end_ms-p.start_ms)/1000:g}"
+            + (" (граница внутри реплики)" if p.cuts_utterance else "") for i, p in enumerate(proposals))
+    else:
+        prompt = "РАСШИФРОВКА\n" + "\n".join(
+            f"{i} [{timecode(s.start_ms)}–{timecode(s.end_ms)}] {s.text}"
+            for i, s in enumerate(segments[left:right]))
+        prompt += "\n\nДОПУСТИМЫЕ КЛИПЫ (clip_id: начало–конец, номера реплик)\n" + "\n".join(
+            f"{i}: {timecode(p.start_ms)}–{timecode(p.end_ms)}, реплики {p.first - left}–{p.last - left}"
+            + (" (граница внутри реплики)" if p.cuts_utterance else "") for i, p in enumerate(proposals))
     schema = {"type": "object", "properties": {"clips": {"type": "array", "maxItems": limit, "items": {"type": "object", "properties": {
         "clip_id": {"type": "integer", "enum": list(range(len(proposals)))},
         **{k: {"type": "integer", "minimum": 0, "maximum": 25} for k in ("hook", "event", "emotion", "completeness")},

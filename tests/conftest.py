@@ -44,3 +44,9 @@ def long_media(source, tools, tmp_path_factory):
     path=tmp_path_factory.mktemp('long-source')/'60-seconds.mp4'
     subprocess.run([tools.ffmpeg,'-v','error','-y','-stream_loop','-1','-i',str(source),'-t','60','-c','copy',str(path)],check=True)
     return probe(path,tools)
+
+
+def pytest_collection_modifyitems(items):
+    # Exercise the changed real-model path before the older long native cases.
+    # The complete suite still runs on success; release validation requires it.
+    items.sort(key=lambda item: item.name != 'test_actual_qwen_mixed_short_meme_and_long_story_and_cache')

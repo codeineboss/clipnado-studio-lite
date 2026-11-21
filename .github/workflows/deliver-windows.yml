@@ -144,7 +144,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         shell: pwsh
         run: |
-          ./.venv/Scripts/python.exe -m pytest -q --junitxml=qa/test-results-windows.xml
+          ./.venv/Scripts/python.exe -m pytest -x -q --junitxml=qa/test-results-windows.xml
           if ($LASTEXITCODE -ne 0) { throw 'Windows regression suite failed' }
       - uses: actions/upload-artifact@v4
         if: always()
