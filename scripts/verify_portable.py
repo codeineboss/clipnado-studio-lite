@@ -99,7 +99,7 @@ socket.socket.connect=no_network;socket.create_connection=no_network
 w.media_loaded(probe(Path('demo/demo.mp4'),w.tools));w.show();w.play_candidate()
 assert w.project.search.profile=='mixed' and w.minimum.value()==15 and w.search_settings().max_seconds==90
 print('PACKAGED_VIDEO_PLAY_START',flush=True)
-stage=[0];timer=QTimer()
+stage=[0];original_clip_ids=[];timer=QTimer()
 def protocol_fixture(args,*_a,**kw):
     if args[args.index('-n')+1]=='0':return 'main: number of tokens in prompt = 1000'
     item={'clip_id':0,'hook':20,'event':20,'emotion':20,'completeness':20,'category':'Юмор','reason':'Protocol fixture'}
@@ -130,16 +130,18 @@ def check():
     elif stage[0]==2 and w.task_thread is None:
         assert w.project.analysis_info['network_used'] is False
         assert w.project.candidates and w.project.candidates[0].provider.startswith('local-qwen:')
+        assert len(w.project.candidates)==2 and w.project.analysis_info['recovery_windows']==1
+        original_clip_ids[:]=[c.id for c in w.project.candidates]
         print('PACKAGED_LOCAL_WORKFLOW_OK',flush=True)
         stage[0]=3;w.content_query.setText('необычный ответ');w.find_by_content()
     elif stage[0]==3 and w.task_thread is None:
         assert w.project.last_query=='необычный ответ' and w.project.query_results[0].match_score==90
-        assert len(w.project.candidates)==1 and w.assistant_dialog
-        w.assistant_dialog.apply_selected();assert len(w.project.candidates)==1
+        assert [c.id for c in w.project.candidates]==original_clip_ids and w.assistant_dialog
+        w.assistant_dialog.apply_selected();assert [c.id for c in w.project.candidates]==original_clip_ids
         print('PACKAGED_CONTENT_QUERY_PROTOCOL_OK',flush=True)
         w.table.selectRow(0);stage[0]=4;w.refine_selected()
     elif stage[0]==4 and w.task_thread is None:
-        assert w.assistant_dialog and len(w.project.candidates)==1
+        assert w.assistant_dialog and [c.id for c in w.project.candidates]==original_clip_ids
         assert (w.project.candidates[0].start_ms,w.project.candidates[0].end_ms)==(0,30000)
         w.close_assistant_dialog();print('PACKAGED_BOUNDARY_REVIEW_PROTOCOL_OK',flush=True)
         w.select_all(True);w.export_clips.cellWidget(0,3).setCurrentIndex(2)
