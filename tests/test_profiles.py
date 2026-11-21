@@ -564,3 +564,41 @@ def test_mixed_neighbor_request_keeps_absolute_anchor_reference(tmp_path, monkey
     )
     assert result.info["complete"] and result.info["current_recommended"]
     assert not result.candidates and (anchor.start_ms, anchor.end_ms) == (24000, 90000)
+
+
+def test_mixed_proposals_do_not_join_events_through_an_ad_break():
+    from clipnado.local_llm import clip_proposals, advertising_break
+
+    source = MediaInfo("stream", "events", 120000, 1920, 1080, 30, True)
+    segments = [
+        Segment(i * 6000, (i + 1) * 6000, "Событие номер " + str(i)) for i in range(20)
+    ]
+    segments[4].text = (
+        "Рекламная пауза: магазин, ссылка в описании, скидка по промокоду."
+    )
+    settings = search_profile(SearchSettings(min_seconds=15), "mixed")
+    proposals = clip_proposals(source, segments, settings, 0, len(segments))
+    assert proposals and all(
+        p.end_ms <= 24000 or p.start_ms >= 30000 for p in proposals
+    )
+    assert any(p.start_ms == 6000 and p.end_ms == 24000 for p in proposals)
+    assert any(p.start_ms >= 30000 and p.end_ms - p.start_ms > 60000 for p in proposals)
+    assert not advertising_break(
+        "Вчера мы обсуждали смешную рекламу: скидка по промокоду, ссылка в описании."
+    )
+    assert not advertising_break(
+        "А теперь расскажу историю: я купил костюм со скидкой по промокоду."
+    )
+    assert not advertising_break(
+        "Рекламная пауза — так мы назвали эту шутку про скидки."
+    )
+    # Coarse imports do not locate the end of an ad precisely enough to block
+    # the entire source segment; keep those flagged intervals for model review.
+    coarse = [Segment(0, 120000, segments[4].text + " Далее целая история.")]
+    assert clip_proposals(source, coarse, settings, 0, 1)
+    # Preserve explicit content searches, including requests about advertising.
+    settings.query = "рекламная пауза"
+    assert any(
+        p.start_ms < 24000 and p.end_ms > 30000
+        for p in clip_proposals(source, segments, settings, 0, len(segments))
+    )

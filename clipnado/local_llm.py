@@ -177,6 +177,24 @@ class ClipProposal:
     cuts_utterance: bool = False
 
 
+def advertising_break(text):
+    """A current, explicit commercial break, not a story mentioning advertising.
+
+    Require both a presenter transition and two commerce signals. Ordinary
+    mentions of shops, discounts or quoted ads must remain available to Qwen.
+    """
+    text = " ".join(text.lower().split())
+    transition = re.search(
+        r"(?:^|[.!?]\s+)(?:(?:ну|ладно)[, ]+)?(?:рекламная пауза|"
+        r"а теперь (?:снова )?реклама|сейчас (?:будет )?реклама|переходим к рекламе)\b",
+        text,
+    )
+    cues = sum(bool(re.search(pattern, text)) for pattern in (
+        r"\bпромокод", r"\bскидк", r"ссылка в описании|переходите по ссылке",
+    ))
+    return bool(transition and cues >= 2)
+
+
 def clip_proposals(media, segments, settings, left, right):
     """Offer only feasible source intervals; the model never calculates times.
 
@@ -202,6 +220,9 @@ def clip_proposals(media, segments, settings, left, right):
     if len(starts) > 40:
         starts = [starts[round(i * (len(starts) - 1) / 39)] for i in range(40)]
     proposals, seen = [], set()
+    # Automatic discovery must not join different events through an explicit
+    # ad break. A content query may intentionally search for advertisements.
+    breaks = [segment for segment in segments[left:right] if segment.end_ms - segment.start_ms <= 30000 and advertising_break(segment.text)] if settings.profile == "mixed" and not settings.query else []
     for start in starts:
         earliest, last_end = start + lo, min(start + hi, upper)
         ends = sorted({s.end_ms for s in segments[left:right] if earliest <= s.end_ms <= last_end})
@@ -218,6 +239,8 @@ def clip_proposals(media, segments, settings, left, right):
         else:
             chosen_ends = {earliest, last_end}
         for end in sorted(chosen_ends):
+            if any(start < segment.end_ms and end > segment.start_ms for segment in breaks):
+                continue
             included = [i for i in range(left, right) if segments[i].end_ms > start and segments[i].start_ms < end]
             if not included or (start, end) in seen:
                 continue
@@ -325,13 +348,14 @@ def build_request(media, segments, settings, left, right, window_count, proposal
     if instruction:
         system += " " + instruction
     if settings.profile == "mixed" and proposals_override is None:
+        system += " В списке C — номер клипа для поля clip_id, R — номер реплики. Возвращай числовой clip_id из списка C."
         # Timecodes stay in the validated local proposal map. The model only
         # needs row coverage and duration to choose an ID; repeating two full
         # timestamps for every alternative wastes most of the CPU context.
-        prompt = "РАСШИФРОВКА (номер реплики: текст)\n" + "\n".join(
-            f"{i}: {s.text}" for i, s in enumerate(segments[left:right]))
-        prompt += "\n\nДОПУСТИМЫЕ КЛИПЫ (clip_id: первая–последняя реплика; длительность в секундах)\n" + "\n".join(
-            f"{i}: {p.first-left}–{p.last-left}; {(p.end_ms-p.start_ms)/1000:g}"
+        prompt = "РАСШИФРОВКА (R — номер реплики)\n" + "\n".join(
+            f"R{i}: {s.text}" for i, s in enumerate(segments[left:right]))
+        prompt += "\n\nДОПУСТИМЫЕ КЛИПЫ (C — clip_id: первая–последняя реплика R; длительность в секундах)\n" + "\n".join(
+            f"C{i}: R{p.first-left}–R{p.last-left}; {(p.end_ms-p.start_ms)/1000:g}"
             + (" (граница внутри реплики)" if p.cuts_utterance else "") for i, p in enumerate(proposals))
     else:
         # Neighbor review compares an absolute anchor interval, so keep its
