@@ -324,7 +324,7 @@ def build_request(media, segments, settings, left, right, window_count, proposal
                    "Общая цель числа клипов не оправдывает неподходящие совпадения.")
     if instruction:
         system += " " + instruction
-    if settings.profile == "mixed":
+    if settings.profile == "mixed" and proposals_override is None:
         # Timecodes stay in the validated local proposal map. The model only
         # needs row coverage and duration to choose an ID; repeating two full
         # timestamps for every alternative wastes most of the CPU context.
@@ -334,11 +334,14 @@ def build_request(media, segments, settings, left, right, window_count, proposal
             f"{i}: {p.first-left}–{p.last-left}; {(p.end_ms-p.start_ms)/1000:g}"
             + (" (граница внутри реплики)" if p.cuts_utterance else "") for i, p in enumerate(proposals))
     else:
+        # Neighbor review compares an absolute anchor interval, so keep its
+        # time references in the prompt. Its smaller proposal list is bounded.
         prompt = "РАСШИФРОВКА\n" + "\n".join(
             f"{i} [{timecode(s.start_ms)}–{timecode(s.end_ms)}] {s.text}"
             for i, s in enumerate(segments[left:right]))
         prompt += "\n\nДОПУСТИМЫЕ КЛИПЫ (clip_id: начало–конец, номера реплик)\n" + "\n".join(
             f"{i}: {timecode(p.start_ms)}–{timecode(p.end_ms)}, реплики {p.first - left}–{p.last - left}"
+            + (f", длительность {(p.end_ms-p.start_ms)/1000:g} с" if settings.profile == "mixed" else "")
             + (" (граница внутри реплики)" if p.cuts_utterance else "") for i, p in enumerate(proposals))
     schema = {"type": "object", "properties": {"clips": {"type": "array", "maxItems": limit, "items": {"type": "object", "properties": {
         "clip_id": {"type": "integer", "enum": list(range(len(proposals)))},

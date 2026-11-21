@@ -13,7 +13,7 @@ class SearchProfile:
     max_seconds: int = 60
 
 
-SEARCH_PROFILE_VERSION = 7
+SEARCH_PROFILE_VERSION = 8
 
 SEARCH_PROFILES = {
     "mixed": SearchProfile(

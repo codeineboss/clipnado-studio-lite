@@ -513,3 +513,54 @@ def test_mixed_selection_keeps_stronger_story_instead_of_filling_quota():
     )
     result = choose_candidates([*shorts, story, meme], settings, Cancellation())
     assert [c.id for c in result] == [story.id, meme.id]
+
+
+def test_mixed_neighbor_request_keeps_absolute_anchor_reference(tmp_path, monkeypatch):
+    import sys
+    from clipnado.assist import LocalClipAssistant
+
+    model = tmp_path / "model.gguf"
+    model.write_bytes(b"GGUF-test")
+    tools = Tools(llama=sys.executable, semantic_model=str(model), acceleration="cpu")
+    source = MediaInfo("source", "mixed-neighbor", 120000, 1920, 1080, 30, True)
+    segments = [
+        Segment(i * 6000, (i + 1) * 6000, "Часть истории номер " + str(i))
+        for i in range(20)
+    ]
+    anchor = Candidate(
+        source.source_file_id, 24000, 90000, 85, "История", "Текущий рассказ"
+    )
+    settings = search_profile(SearchSettings(min_seconds=15), "mixed")
+
+    def window(self, request, staged, token, progress, stats, decode):
+        assert (
+            "00:00:24.000" in request.prompt and "00:01:30.000" in request.prompt
+        ), "The anchor in the instruction cannot be mapped to the proposal list"
+        current = next(
+            i
+            for i, p in enumerate(request.proposals)
+            if (p.start_ms, p.end_ms) == (anchor.start_ms, anchor.end_ms)
+        )
+        item = dict(
+            clip_id=current,
+            hook=20,
+            event=20,
+            emotion=20,
+            completeness=20,
+            category="История",
+            reason="Сохранить текущие границы",
+        )
+        return decode([item]), 1000, [], None
+
+    monkeypatch.setattr(LocalClipAssistant, "_window", window)
+    result = LocalClipAssistant(tools).refine(
+        source,
+        segments,
+        anchor,
+        settings,
+        tmp_path / "cache",
+        Cancellation(),
+        lambda *_: None,
+    )
+    assert result.info["complete"] and result.info["current_recommended"]
+    assert not result.candidates and (anchor.start_ms, anchor.end_ms) == (24000, 90000)
