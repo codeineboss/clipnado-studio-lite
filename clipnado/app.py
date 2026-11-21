@@ -1551,15 +1551,20 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
+def configure_application(app):
+    """Use the same Qt identity and non-native style in every GUI entrypoint."""
+    app.setApplicationName("ClipnadoStudioLite")
+    app.setOrganizationName("Clipnado")
+    app.setStyle("Fusion")
+    app.setStyleSheet(STYLE)
+
+
 def main():
     app = QApplication(sys.argv)
     translator = QTranslator(app)
     if translator.load("qtbase_ru", QLibraryInfo.path(QLibraryInfo.TranslationsPath)):
         app.installTranslator(translator)
-    app.setApplicationName("ClipnadoStudioLite")
-    app.setOrganizationName("Clipnado")
-    app.setStyle("Fusion")
-    app.setStyleSheet(STYLE)
+    configure_application(app)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

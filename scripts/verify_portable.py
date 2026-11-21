@@ -69,7 +69,7 @@ from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication,QMessageBox
-from clipnado.app import MainWindow
+from clipnado.app import MainWindow,configure_application
 from clipnado.media import probe
 from clipnado.models import Candidate,Segment
 from clipnado.process import Cancellation,run
@@ -80,6 +80,8 @@ faulthandler.enable()
 faulthandler.dump_traceback_later(90,repeat=True)
 print('PACKAGED_GUI_IMPORTS_OK',flush=True)
 app=QApplication([])
+configure_application(app)
+print('PACKAGED_UI_CONFIGURED_OK',flush=True)
 def uncaught(kind,value,tb):
     traceback.print_exception(kind,value,tb)
     app.exit(2)
@@ -236,6 +238,7 @@ result=app.exec();faulthandler.cancel_dump_traceback_later();sys.exit(result)
         output = execute(code, 210, [Path(tmp) / "export"])
         required = (
             "PACKAGED_VIDEO_PIXELS_OK",
+            "PACKAGED_UI_CONFIGURED_OK",
             "PACKAGED_MIXED_GAMING_EXPORT_OK",
             "PACKAGED_LOCAL_WORKFLOW_OK",
             "PACKAGED_CONTENT_QUERY_PROTOCOL_OK",

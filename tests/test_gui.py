@@ -7,14 +7,14 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from clipnado.app import MainWindow, STYLE
+from clipnado.app import MainWindow, configure_application
 from clipnado.models import Segment
 
 
 @pytest.fixture(scope="session")
 def app():
     result = QApplication.instance() or QApplication([])
-    result.setStyleSheet(STYLE)
+    configure_application(result)
     return result
 
 
