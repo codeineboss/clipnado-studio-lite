@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtMultimedia import QVideoFrame
 from PySide6.QtWidgets import QLabel
 
 
@@ -32,6 +33,7 @@ class VideoPreview(QLabel):
         self.image = image.copy()
         self._draw()
 
+    @Slot(QVideoFrame)
     def set_frame(self, frame):
         now = time.monotonic()
         if not frame.isValid() or now - self._last_frame < 1 / 24:

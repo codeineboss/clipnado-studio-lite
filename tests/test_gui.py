@@ -638,3 +638,17 @@ def test_search_story_switch_updates_upper_limit_without_losing_clips(app,window
     window.search_profile.setCurrentIndex(window.search_profile.findData('memes'))
     assert window.minimum.value()==60 and window.search_settings().max_seconds==60
     assert window.project.candidates==[c] and window.task_thread is None
+
+
+def test_video_frames_are_deferred_until_gui_event_loop(app, window):
+    from PySide6.QtGui import QImage
+    from PySide6.QtMultimedia import QVideoFrame
+    image = QImage(32,18,QImage.Format_RGB32)
+    image.fill(0xffff0000)
+    assert window.video.frame_count==0
+    window.video_sink.setVideoFrame(QVideoFrame(image))
+    # Frame painting must not re-enter a widget/table update synchronously.
+    assert window.video.frame_count==0
+    app.processEvents()
+    assert window.video.frame_count==1
+    assert window.video.image.pixelColor(0,0).red()==255

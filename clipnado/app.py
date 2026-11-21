@@ -642,7 +642,7 @@ class MainWindow(QMainWindow):
         self.audio.setVolume(.7)
         self.player.setAudioOutput(self.audio)
         self.video_sink = QVideoSink(self)
-        self.video_sink.videoFrameChanged.connect(self.video.set_frame)
+        self.video_sink.videoFrameChanged.connect(self.video.set_frame, Qt.QueuedConnection)
         self.player.setVideoSink(self.video_sink)
         self.player.positionChanged.connect(self.position_changed)
         self.player.errorOccurred.connect(lambda error, text: self.preview_status.setText(
