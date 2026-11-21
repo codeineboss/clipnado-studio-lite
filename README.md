@@ -58,7 +58,7 @@
 ## Скачать и открыть
 
 <!-- WINDOWS_VALIDATION_START -->
-Windows-проверка этого обновления и публикация пакета выполняются через `.github/workflows/deliver-windows.yml`. До завершения используйте предыдущий проверенный выпуск.
+**Windows: 200 тестов прошли без пропусков.** [Полный набор](https://github.com/codeineboss/clipnado-studio-lite/actions/runs/44902367810), [готовый пакет](https://github.com/codeineboss/clipnado-studio-lite/actions/runs/44902367810). Настоящие Whisper/Qwen, игровой MP4, выбор областей и встроенный Python проверены. Подробности: [QA_REPORT.md](QA_REPORT.md).
 <!-- WINDOWS_VALIDATION_END -->
 
 1. Полностью распакуйте [Windows x64 ZIP](https://github.com/codeineboss/clipnado-studio-lite/releases/download/preview-0.1.13/ClipnadoStudioLite-Windows-x64.zip).

@@ -1,0 +1,72 @@
+{
+  "version": "0.1.13",
+  "repository": "codeineboss/clipnado-studio-lite",
+  "tested_commit": "6c1feb801d4d6cfecd56068ec2486aa4438d0e0e",
+  "workflow_run": 44902367810,
+  "workflow_url": "https://github.com/codeineboss/clipnado-studio-lite/actions/runs/44902367810",
+  "windows_tests_passed": 200,
+  "windows_tests_skipped": 0,
+  "test_report_sha256": "ada383edcfd49f2183b183b932b6525f7e97b0ddf77ffc855569725c2bea7e30",
+  "test_report_artifact_id": 14709618098,
+  "test_report_artifact_sha256": "c7a9a7dd3ac5be8d8e726e938cc8e07515cb35edbd6db31b899791452f0556ba",
+  "actual_whisper": true,
+  "actual_qwen": true,
+  "actual_qwen_mixed_short_and_long": true,
+  "actual_portable_gui_verified": true,
+  "shared_production_gui_configuration": true,
+  "automatic_minimum_seconds": 15,
+  "regular_maximum_seconds": 60,
+  "story_maximum_seconds": 90,
+  "mixed_search": true,
+  "constrained_utterance_spans": true,
+  "independent_speech_blocks": true,
+  "bounded_unselected_speech_recovery": true,
+  "built_in_animations": false,
+  "export_subtitles": false,
+  "whisper_transcript_search_preserved": true,
+  "legacy_projects_migrated": true,
+  "empty_lower_zone_verified": true,
+  "individual_clip_layouts_preserved": true,
+  "gaming_regions_editor_verified": true,
+  "gaming_mp4_pixels_verified": true,
+  "target_physical_pc_verified": false,
+  "user_camera_quality_issue_verified": false,
+  "published": true,
+  "published_at": "2026-11-21T13:57:37Z",
+  "release_url": "https://github.com/codeineboss/clipnado-studio-lite/releases/tag/preview-0.1.13",
+  "asset_digests_verified": true,
+  "assets": [
+    {
+      "name": "ClipnadoStudioLite-source.zip",
+      "bytes": 10395438,
+      "sha256": "ff92fe8d03a12c3e374b5c0c1595c3fda3e11f01c523e04a4371c65c9b0d27f3"
+    },
+    {
+      "name": "ClipnadoStudioLite-Windows-x64.zip",
+      "bytes": 463781732,
+      "sha256": "2fdd06ea00358f281075af254be9c2ed1392f28a1bf08893819fd70d9b8a599a"
+    },
+    {
+      "name": "QA_REPORT.md",
+      "bytes": 10463,
+      "sha256": "822f8c7119432b583f5561d2efdfa53fdc7af0f877bacff44a15fc60addd00e4"
+    },
+    {
+      "name": "Qwen_Qwen3-4B-Instruct-2507-Q3_K_M.gguf",
+      "bytes": 2075618016,
+      "sha256": "35295e9a0a42eff5ebc592412c754991c0b6cc36bf4f282b2a491b211476752d"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "bytes": 467,
+      "sha256": "59b977072bc390e0a420c16f488b6b491d12e6ce748d259ac0724017f6d4b329"
+    },
+    {
+      "name": "START-HERE.md",
+      "bytes": 18909,
+      "sha256": "543ae6d83a5793734f9f32cf96f8b14ed8fc38a1a311a351f19dc9738c51eadf"
+    }
+  ],
+  "portable_runtime_log_tags_verified": true,
+  "windows_suite_seconds": 6226.1
+}
