@@ -378,7 +378,9 @@ def test_mixed_export_uses_individual_layouts_and_saves_choices(app, window, med
     assert [(probe(p, window.tools).width, probe(p, window.tools).height) for p in paths] == [(720,720),(720,720),(720,1280)]
     pixels = [frame(p, window.tools, .2) for p in paths]
     assert max(pixels[0][-720*100*3:]) <= 5  # reserved animation zone
-    assert pixels[1][-3] > 180 and pixels[2][-3] > 180  # both modes fill the lower canvas
+    assert 140 < pixels[1][-3] < 165  # blurred background fills the canvas, dimmed by 40%
+    assert pixels[1][(360*720+360)*3] > 220  # foreground keeps its source brightness
+    assert pixels[2][-3] > 180  # gaming foreground still fills its lower zone
     assert 'Экспорт завершён: 3' in window.status.text()
     assert window.gaming_button.isEnabled()
     path=tmp_path/'individual-layouts.json'
@@ -685,7 +687,7 @@ def test_tiktok_guides_fit_viewport_and_preserve_frame(app, image_size, widget_s
     preview.close()
 
 
-@pytest.mark.parametrize("layout", ["top_black", "blur_center", "gaming_split"])
+@pytest.mark.parametrize("layout", ["top_black", "blur_center", "gaming_split", "center_black"])
 def test_tiktok_guides_toggle_and_real_export_stays_clean(app, window, media, tmp_path, layout):
     from PySide6.QtWidgets import QCheckBox
     from clipnado.models import Candidate
@@ -725,3 +727,34 @@ def test_tiktok_guides_toggle_and_real_export_stays_clean(app, window, media, tm
     assert not any(min(pixels[i:i+3]) > 200 for i in range(0, len(pixels), 3))
     assert preview.image == original
     window.close_export_preview()
+
+
+def test_center_black_choice_and_saved_brightness_roundtrip(app, window, media, tmp_path):
+    from clipnado.models import Candidate, EXPORT_LAYOUTS
+    from clipnado.projects import load_project, save_project
+    window.media_loaded(media)
+    assert window.background_dim.value() == 40 and window.project.export.background_dim == .4
+    clip = Candidate(media.source_file_id, 0, 1000, 80, 'Юмор', 'Центр', selected=True)
+    window.project.candidates = [clip]
+    window.refresh_candidates()
+    index = list(EXPORT_LAYOUTS).index('center_black')
+    window.export_clips.cellWidget(0,3).setCurrentIndex(index)
+    assert clip.export_layout == 'center_black'
+    window.export_layout.setCurrentIndex(index)
+    assert not window.top.isEnabled() and not window.video_y.isEnabled()
+    # An existing project's chosen brightness survives opening. Applying the
+    # refreshed dialogue preset is the explicit way to select the darker default.
+    window.background_dim.setValue(25)
+    window.project.export = window.export_settings()
+    path = tmp_path/'center.json'
+    save_project(window.project, path)
+    window.project = load_project(path)
+    window.load_ui()
+    assert window.background_dim.value() == 25
+    assert window.export_layout.currentIndex() == index
+    assert window.project.candidates[0].export_layout == 'center_black'
+    window.export_preset.setCurrentIndex(window.export_preset.findData('dialogue'))
+    window.apply_export_preset()
+    assert window.background_dim.value() == 40
+    assert window.project.candidates[0].export_layout == 'center_black'
+    assert not hasattr(window, 'subtitle_mode')

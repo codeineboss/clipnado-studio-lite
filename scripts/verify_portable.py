@@ -100,6 +100,7 @@ def no_network(*_a,**_kw):raise RuntimeError('Unexpected network connection')
 socket.socket.connect=no_network;socket.create_connection=no_network
 w.media_loaded(probe(Path('demo/demo.mp4'),w.tools));w.show();w.play_candidate()
 assert w.project.search.profile=='mixed' and w.minimum.value()==15 and w.search_settings().max_seconds==90
+assert w.background_dim.value()==40
 print('PACKAGED_VIDEO_PLAY_START',flush=True)
 stage=[0];original_clip_ids=[];timer=QTimer()
 def protocol_fixture(args,*_a,**kw):
@@ -112,16 +113,21 @@ def check():
         if w.video.frame_count<1 or w.player.position()<100 or w.video.image.isNull():return
         print('PACKAGED_VIDEO_PIXELS_OK',flush=True)
         w.player.pause();w.player.setPosition(0);w.minimum.setValue(2)
-        w.project.candidates=[Candidate(w.project.media.source_file_id,0,2000,80,'Юмор','Portable export',selected=True) for _ in range(3)]
+        w.project.candidates=[Candidate(w.project.media.source_file_id,0,2000,80,'Юмор','Portable export',selected=True) for _ in range(4)]
         w.refresh_candidates();w.export_clips.cellWidget(1,3).setCurrentIndex(1);w.export_clips.cellWidget(2,3).setCurrentIndex(2)
+        w.export_clips.cellWidget(3,3).setCurrentIndex(3)
         w.gaming_camera=CAMERA.copy();w.gaming_game=GAME.copy()
         w.resolution.setCurrentText('720');w.aspect.setCurrentText('1:1');w.export_folder.setText(sys.argv[1])
         stage[0]=1;w.export_selected()
     elif stage[0]==1 and w.task_thread is None:
-        files=sorted(Path(sys.argv[1]).glob('*.mp4'));assert len(files)==3
+        files=sorted(Path(sys.argv[1]).glob('*.mp4'));assert len(files)==4
         infos=[probe(p,w.tools) for p in files]
-        assert [(m.width,m.height) for m in infos]==[(720,720),(720,720),(720,1280)]
-        assert [c.export_layout for c in w.project.candidates]==[None,'blur_center','gaming_split']
+        assert [(m.width,m.height) for m in infos]==[(720,720),(720,720),(720,1280),(720,720)]
+        assert [c.export_layout for c in w.project.candidates]==[None,'blur_center','gaming_split','center_black']
+        image=QImage.fromData(source_frame(infos[3],400,w.tools,Cancellation()))
+        assert image.pixelColor(image.width()//2,0).value()<=5
+        assert image.pixelColor(image.width()//2,image.height()-1).value()<=5
+        print('PACKAGED_CENTER_BLACK_EXPORT_OK',flush=True)
         print('PACKAGED_MIXED_GAMING_EXPORT_OK',flush=True)
         long_source=Path(sys.argv[1])/'long-demo.mp4'
         run([w.tools.ffmpeg,'-v','error','-y','-stream_loop','-1','-i',str(Path('demo/demo.mp4').resolve()),'-t','60','-c','copy',str(long_source)])
@@ -220,6 +226,7 @@ def check():
         w.export_preset.setCurrentIndex(w.export_preset.findData('dialogue'));w.apply_export_preset()
         assert w.project.candidates[0].export_layout=='top_black'
         assert w.project.export.preset=='dialogue' and w.project.export.normalize_audio
+        assert w.background_dim.value()==40 and w.project.export.background_dim==.4
         w.apply_layout_to_selected()
         w.export_folder.setText(str(Path(sys.argv[1])/'profiles'))
         stage[0]=9;w.export_selected()
@@ -249,6 +256,7 @@ result=app.exec();faulthandler.cancel_dump_traceback_later();sys.exit(result)
             "PACKAGED_VIDEO_PIXELS_OK",
             "PACKAGED_UI_CONFIGURED_OK",
             "PACKAGED_TIKTOK_GUIDES_OK",
+            "PACKAGED_CENTER_BLACK_EXPORT_OK",
             "PACKAGED_MIXED_GAMING_EXPORT_OK",
             "PACKAGED_LOCAL_WORKFLOW_OK",
             "PACKAGED_CONTENT_QUERY_PROTOCOL_OK",

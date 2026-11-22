@@ -113,7 +113,7 @@ def export_profile(settings, code, media, has_transcript):
         video_y=0.0,
         color="off",
         normalize_audio=True,
-        background_dim=0.3,
+        background_dim=0.4,
     )
     result.validate()
     return result

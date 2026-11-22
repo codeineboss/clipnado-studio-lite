@@ -10,6 +10,7 @@ EXPORT_LAYOUTS = {
     "top_black": "Видео сверху · тёмная зона",
     "blur_center": "Видео по центру · размытый фон",
     "gaming_split": "Игровая нарезка · стример сверху, игра снизу",
+    "center_black": "Видео по центру · чёрный фон",
 }
 
 
@@ -167,7 +168,7 @@ class ExportSettings:
     gaming_fraction: float = .4
     color: str = "off"
     normalize_audio: bool = False
-    background_dim: float = .25
+    background_dim: float = .4
     preset: str = "custom"
 
     def validate(self) -> None:

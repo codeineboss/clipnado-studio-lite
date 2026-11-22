@@ -430,7 +430,7 @@ class MainWindow(QMainWindow):
         self.quality = combo(["Высокое · CRF 18", "Стандарт · CRF 20", "Компактно · CRF 25"], "Высокое · CRF 18")
         self.top = spin(20, 100, 40)
         self.video_y = spin(0, 80, 0)
-        for label, widget in [("Общее оформление", self.export_layout), ("Игровая нарезка", self.gaming_summary), ("Холст для первых двух вариантов", self.aspect), ("Размер, p", self.resolution), ("FPS", self.fps), ("Качество H.264", self.quality),
+        for label, widget in [("Общее оформление", self.export_layout), ("Игровая нарезка", self.gaming_summary), ("Холст (кроме игровой нарезки)", self.aspect), ("Размер, p", self.resolution), ("FPS", self.fps), ("Качество H.264", self.quality),
                               ("Высота зоны видео, %", self.top), ("Отступ зоны сверху, %", self.video_y)]:
             form.addRow(label, widget)
         self.export_folder = QLineEdit(str(self.output))
@@ -446,7 +446,7 @@ class MainWindow(QMainWindow):
         comfort_form = QFormLayout(comfort)
         self.color_mode = combo(["Исходные цвета", "Мягкая коррекция", "Немного светлее"])
         self.normalize_audio = QCheckBox("Выравнивать громкость отрывка (цель −16 LUFS)")
-        self.background_dim = spin(0, 60, 25)
+        self.background_dim = spin(0, 60, 40)
         comfort_form.addRow("Цвет", self.color_mode)
         comfort_form.addRow("Звук", self.normalize_audio)
         comfort_form.addRow("Затемнение размытого фона, %", self.background_dim)
@@ -522,6 +522,7 @@ class MainWindow(QMainWindow):
             "top_black": "Видео целиком вписано сверху, нижняя тёмная зона остаётся свободной для монтажа.",
             "blur_center": "Видео целиком по центру, фон — его синхронная увеличенная размытая копия.",
             "gaming_split": "Игровая нарезка: стример сверху, игра снизу. Обе области берутся из одного отрывка и остаются синхронными; результат 9:16 без растяжения.",
+            "center_black": "Видео целиком по центру на чёрном фоне. Размер и пропорции основного кадра такие же, как в варианте с размытием; без обрезки и растяжения.",
         }
         self.export_notice.setText("Общее оформление: " + notices[code] + " В таблице можно выбрать свой вариант для каждого клипа. Области камеры и игры общие для выбранного видео. Для высокого качества выберите 1080p, CRF 18 и FPS исходника. Разрешение, FPS и качество — общие. Обработка изображения и звука включается отдельно ниже.")
         self.refresh_export_clips()

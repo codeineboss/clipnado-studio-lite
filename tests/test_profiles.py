@@ -87,7 +87,7 @@ def test_export_profiles_preserve_regions_and_choose_quality(code, fps, expected
     if code == "gaming":
         assert result.gaming_fraction == 0.35
     elif code == "dialogue":
-        assert result.layout == "blur_center" and result.background_dim == 0.3
+        assert result.layout == "blur_center" and result.background_dim == 0.4
     else:
         assert result.layout == "top_black" and result.video_y == 0
     assert export_profile(before, code, source, False) == result

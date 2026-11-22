@@ -44,6 +44,10 @@ def video_filter(settings: ExportSettings) -> str:
                 f"crop={bw}:{bh},gblur=sigma=12:steps=2,colorchannelmixer=rr={1-settings.background_dim:.3f}:gg={1-settings.background_dim:.3f}:bb={1-settings.background_dim:.3f},scale={width}:{height},setsar=1[bg];"
                 f"[fgsrc]scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[fg];"
                 "[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1,format=yuv420p")
+    if settings.layout == "center_black":
+        return (f"{color_filter(settings)}fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,"
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+                f"setsar=1,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p")
     zone = int(height * settings.top_fraction) // 2 * 2
     y = int(height * settings.video_y) // 2 * 2
     return (f"{color_filter(settings)}fps={settings.fps},scale=trunc(iw*sar/2)*2:ih,setsar=1,"
