@@ -67,7 +67,7 @@ def test_center_black_legacy_brightness_preferences(media, tmp_path):
         loaded = load_project(path)
         assert loaded.export.layout == "center_black" and loaded.export.background_dim == brightness
         assert loaded.candidates == [clip]
-    legacy = json.loads(path.read_text())
+    legacy = json.loads(path.read_text(encoding='utf-8'))
     legacy['export'].pop('background_dim')
     path.write_text(json.dumps(legacy), encoding='utf-8')
     assert load_project(path).export.background_dim == 0
