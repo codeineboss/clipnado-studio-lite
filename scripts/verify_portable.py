@@ -68,7 +68,7 @@ import json,sys,socket,traceback,faulthandler
 from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QApplication,QMessageBox
+from PySide6.QtWidgets import QApplication,QMessageBox,QCheckBox
 from clipnado.app import MainWindow,configure_application
 from clipnado.media import probe
 from clipnado.models import Candidate,Segment
@@ -151,8 +151,17 @@ def check():
     elif stage[0]==5 and w.task_thread is None:
         from clipnado.preview import VideoPreview
         assert w.export_preview_dialog
-        image=w.export_preview_dialog.findChild(VideoPreview).image
+        preview=w.export_preview_dialog.findChild(VideoPreview)
+        image=preview.image.copy()
         assert (image.width(),image.height())==(360,640)
+        guides=w.export_preview_dialog.findChild(QCheckBox,'tiktok_guides')
+        assert guides.isChecked() and preview.guides_enabled
+        with_guides=preview.pixmap().toImage()
+        guides.setChecked(False)
+        assert not preview.guides_enabled and preview.pixmap().toImage()!=with_guides
+        guides.setChecked(True)
+        assert preview.guides_enabled and preview.image==image
+        print('PACKAGED_TIKTOK_GUIDES_OK',flush=True)
         w.close_export_preview();print('PACKAGED_EXPORT_PREVIEW_OK',flush=True)
         path=make_fixture(Path(sys.argv[1])/'game-stream.mp4',w.tools.ffmpeg)
         w.media_loaded(probe(path,w.tools))
@@ -239,6 +248,7 @@ result=app.exec();faulthandler.cancel_dump_traceback_later();sys.exit(result)
         required = (
             "PACKAGED_VIDEO_PIXELS_OK",
             "PACKAGED_UI_CONFIGURED_OK",
+            "PACKAGED_TIKTOK_GUIDES_OK",
             "PACKAGED_MIXED_GAMING_EXPORT_OK",
             "PACKAGED_LOCAL_WORKFLOW_OK",
             "PACKAGED_CONTENT_QUERY_PROTOCOL_OK",

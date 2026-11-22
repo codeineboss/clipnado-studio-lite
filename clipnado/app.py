@@ -34,6 +34,7 @@ from .media import Tools, probe, thumbnail
 from .models import EXPORT_LAYOUTS, Candidate, ExportSettings, Project, SearchSettings, Segment, parse_time, timecode
 from .process import Cancellation, Cancelled, run
 from .preview import VideoPreview
+from .tiktok_preview import TikTokPreview
 from .projects import load_project, save_project
 from .selection import shortfall_message
 from .settings import data_root, read_settings, restore_tools, write_settings
@@ -622,11 +623,18 @@ class MainWindow(QMainWindow):
                 layout = QVBoxLayout(dialog)
                 heading = note(f"{timecode(candidate.start_ms)}–{timecode(candidate.end_ms)} · {EXPORT_LAYOUTS[settings.layout]}\nОдин кадр с выбранным оформлением, обработкой цвета. Звук проверяется в готовом MP4.")
                 layout.addWidget(heading)
-                preview = VideoPreview()
+                guides = QCheckBox("Показать интерфейс TikTok · примерно")
+                guides.setObjectName("tiktok_guides")
+                guides.setToolTip("Пример расположения панелей и кнопок. Их положение зависит от устройства и описания. Разметка не экспортируется.")
+                layout.addWidget(guides)
+                preview = TikTokPreview()
                 preview.set_image(image)
+                guides.toggled.connect(preview.set_guides_enabled)
+                guides.setChecked(True)
                 layout.addWidget(preview, 1)
+                layout.addWidget(note("Разметка приблизительная: интерфейс зависит от телефона и описания. В MP4 она не попадёт."))
                 layout.addWidget(button("Закрыть", dialog.close))
-                dialog.resize(max(400, image.width() + 50), min(image.height() + 160, self.screen().availableGeometry().height() - 60))
+                dialog.resize(max(400, image.width() + 50), min(image.height() + 250, self.screen().availableGeometry().height() - 60))
                 self.export_preview_dialog = dialog
                 dialog.destroyed.connect(lambda: setattr(self, "export_preview_dialog", None) if self.export_preview_dialog is dialog else None)
                 dialog.show()

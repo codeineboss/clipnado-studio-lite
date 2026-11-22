@@ -652,3 +652,76 @@ def test_video_frames_are_deferred_until_gui_event_loop(app, window):
     app.processEvents()
     assert window.video.frame_count==1
     assert window.video.image.pixelColor(0,0).red()==255
+
+
+@pytest.mark.parametrize("image_size", [(360,640), (640,360), (400,400)])
+@pytest.mark.parametrize("widget_size", [(400,800), (800,400)])
+def test_tiktok_guides_fit_viewport_and_preserve_frame(app, image_size, widget_size):
+    from PySide6.QtGui import QImage
+    from clipnado.tiktok_preview import TikTokPreview
+
+    preview = TikTokPreview()
+    image = QImage(*image_size, QImage.Format_RGB32)
+    image.fill(0xffff0000)
+    preview.set_image(image)
+    preview.resize(*widget_size)
+    preview.show()
+    app.processEvents()
+    original_key = preview.image.cacheKey()
+    plain = preview.grab().toImage()
+    preview.set_guides_enabled(True)
+    guided = preview.grab().toImage()
+    assert guided != plain
+    assert preview.image.cacheKey() == original_key and preview.image == image
+    assert guided.pixelColor(guided.width()//2, guided.height()//2).red() == 255
+    assert guided.pixelColor(guided.width()//2, guided.height()//2).green() == 0
+    # All chrome stays inside the simulated portrait screen, including when
+    # the preview widget itself is wider than the phone.
+    if widget_size[0] > widget_size[1]:
+        assert guided.pixelColor(10, guided.height()//2).red() == 0
+        assert guided.pixelColor(guided.width()-10, guided.height()//2).red() == 0
+    preview.set_guides_enabled(False)
+    assert preview.grab().toImage() == plain
+    preview.close()
+
+
+@pytest.mark.parametrize("layout", ["top_black", "blur_center", "gaming_split"])
+def test_tiktok_guides_toggle_and_real_export_stays_clean(app, window, media, tmp_path, layout):
+    from PySide6.QtWidgets import QCheckBox
+    from clipnado.models import Candidate
+    from clipnado.tiktok_preview import TikTokPreview
+    from test_export import frame
+
+    window.media_loaded(media)
+    window.project.candidates = [Candidate(media.source_file_id, 0, 1000, 80,
+                                            "Юмор", "Кадр", selected=True, export_layout=layout)]
+    window.gaming_camera = [.75,0,.25,.3]
+    window.gaming_game = [0,0,.7,.9]
+    window.resolution.setCurrentText('720')
+    window.refresh_candidates()
+    before = window.export_settings()
+    window.preview_export_clip()
+    wait_task(app, window)
+    dialog = window.export_preview_dialog
+    preview = dialog.findChild(TikTokPreview)
+    toggle = dialog.findChild(QCheckBox, 'tiktok_guides')
+    assert toggle.isChecked() and preview.guides_enabled
+    assert not window.video.__class__ is TikTokPreview
+    original = preview.image.copy()
+    guided = preview.grab().toImage()
+    toggle.setChecked(False)
+    assert not preview.guides_enabled and preview.grab().toImage() != guided
+    toggle.setChecked(True)
+    assert preview.guides_enabled and preview.image == original
+    assert window.export_settings() == before
+    # Leave the chrome ON while creating a real MP4. No white guide text or
+    # icons may appear in the solid-red/black source; each layout is checked.
+    window.export_folder.setText(str(tmp_path / 'clean-export'))
+    window.export_selected()
+    wait_task(app, window)
+    paths = list((tmp_path / 'clean-export').glob('*.mp4'))
+    assert len(paths) == 1 and preview.guides_enabled
+    pixels = frame(paths[0], window.tools, .2)
+    assert not any(min(pixels[i:i+3]) > 200 for i in range(0, len(pixels), 3))
+    assert preview.image == original
+    window.close_export_preview()
