@@ -45,6 +45,7 @@ def validate_test_report(path):
         "test_fine_asr_cache_is_separate_and_preserves_strong_reactions",
         "test_model_selects_rows_and_source_quotes_are_inserted_without_generation",
         "test_preview_pixels_and_guides_do_not_feed_back_into_layout_geometry",
+        "test_invalid_discovery_proposal_does_not_discard_valid_event_or_fill_quota",
         "test_profile_cache_is_separate_and_reused",
         "test_search_profiles_new_defaults_change_without_analysis_and_restore_legacy",
         "test_export_profiles_apply_preserve_individual_choices_and_roundtrip",
@@ -86,7 +87,7 @@ def validate_test_report(path):
         "test_black_bar_suggestion_handles_corner_camera_and_black_intro",
     }
     if (
-        len(cases) < 251
+        len(cases) < 252
         or not required <= names
         or any(
             c.find(tag) is not None

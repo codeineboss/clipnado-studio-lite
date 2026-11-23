@@ -281,7 +281,7 @@ def analyze_highlights(provider, media, segments, settings, cache, token, progre
     folder.mkdir(parents=True, exist_ok=True)
     windows = transcript_windows(segments, settings)
     pending, visited = deque(windows), set()
-    events, failed, cached, checked, splits = [], 0, 0, 0, 0
+    events, discovery_rejections, failed, cached, checked, splits = [], [], 0, 0, 0, 0
     stats = {'warnings': warnings, 'max_prompt_tokens': 0}
     while pending:
         token.check()
@@ -296,7 +296,11 @@ def analyze_highlights(provider, media, segments, settings, cache, token, progre
             continue
         path = folder/f'events-{left}-{right}.json'
         try:
-            items = json.loads(path.read_text(encoding='utf-8'))
+            saved = json.loads(path.read_text(encoding='utf-8'))
+            items = saved['events'] if isinstance(saved, dict) else saved
+            invalid = saved.get('rejected', []) if isinstance(saved, dict) else []
+            if not isinstance(invalid, list):
+                raise ValueError('Неверный кэш исключённых предложений')
             batch = [validate_event(item, segments, settings, left, right) for item in items]
             cached += 1
         except (OSError, ValueError, TypeError, KeyError):
@@ -304,26 +308,32 @@ def analyze_highlights(provider, media, segments, settings, cache, token, progre
             progress(80, f'События: участок {checked+failed+1}/{max(len(windows),len(visited)+len(pending))} · поиск сильного начала…')
             try:
                 def decode_events(rows):
-                    try:
-                        return [model_event(item, segments, settings, left, right) for item in rows]
-                    except (KeyError, TypeError) as exc:
-                        raise ValueError('Неверный формат события или цитаты') from exc
-                batch, _, output, error = provider._window(request, staged, token,
+                    good, bad = [], []
+                    for index, item in enumerate(rows):
+                        try:
+                            good.append(model_event(item, segments, settings, left, right))
+                        except (ValueError, KeyError, TypeError) as exc:
+                            bad.append({'proposal': index, 'reason': str(exc)})
+                    if rows and not good:
+                        raise ValueError('Все предложенные интервалы неверны: '+bad[0]['reason'])
+                    return good, bad
+                result, _, output, error = provider._window(request, staged, token,
                     lambda value, text: progress(80+min(8, checked*8//max(1,len(windows))), 'Поиск событий · '+text), stats, decode_events)
             except PromptTooLong as exc:
                 children = split_window(segments, settings, left, right)
                 if children:
                     atomic_json(branch, children); pending.extendleft(reversed(children)); splits += 1
                     continue
-                batch, output, error = None, [], str(exc)
-            if batch is None:
+                result, output, error = None, [], str(exc)
+            if result is None:
                 failed += 1
                 atomic_json(folder/f'events-{left}-{right}.failed.json', {'error': error, 'outputs': output})
                 warnings.append(f'Не завершён поиск событий {timecode(segments[left].start_ms)}–{timecode(segments[right-1].end_ms)}: {error}')
                 continue
-            atomic_json(path, [asdict(e) for e in batch])
+            batch, invalid = result
+            atomic_json(path, {'events': [asdict(e) for e in batch], 'rejected': invalid})
             (folder/f'events-{left}-{right}.failed.json').unlink(missing_ok=True)
-        events.extend(batch); checked += 1
+        events.extend(batch); discovery_rejections.extend(invalid); checked += 1
 
     # A single shortlist across the recording. The critic never sees rank.
     unique = {}
@@ -376,12 +386,14 @@ def analyze_highlights(provider, media, segments, settings, cache, token, progre
         accepted.extend(good); rejected.extend(bad); reviews += 1
     chosen = choose_candidates(accepted, settings, token)[:settings.count]
     atomic_json(folder/'editorial-report.json', {'discovered': len(unique), 'shortlisted': len(shortlist),
-                                               'accepted': len(accepted), 'rejected': rejected})
+                                               'accepted': len(accepted), 'rejected': rejected,
+                                               'invalid_discovery_proposals': discovery_rejections})
     return LocalAnalysisResult(chosen, warnings, {
         'mode': 'local-qwen-hooks', 'method_version': METHOD_VERSION, 'complete': not failed and not review_failed,
         'checked_windows': checked, 'total_windows': checked+failed, 'failed_windows': failed,
         'review_failed_windows': review_failed, 'adaptive_splits': splits, 'cached_windows': cached,
         'discovered_events': len(unique), 'shortlisted_events': len(shortlist), 'reviewed_batches': reviews,
+        'invalid_discovery_proposals': len(discovery_rejections),
         'editorial_rejections': len(rejected), 'rejection_details': rejected, 'context_tokens': 8192,
         'max_prompt_tokens': stats['max_prompt_tokens'], 'query': '',
         'model': Path(provider.tools.semantic_model).name, 'opening_seconds': 4, 'preferred_seconds': [20,40],

@@ -250,3 +250,19 @@ def test_model_selects_rows_and_source_quotes_are_inserted_without_generation(sp
     request=discovery_request(media_for(speech),speech,settings,0,len(speech),[],3)
     assert 'hook_quote' not in request.schema['properties']['events']['items']['properties']
     assert 'end_quote' not in review_request(speech,settings,[event]).schema['properties']['reviews']['items']['properties']
+
+
+def test_invalid_discovery_proposal_does_not_discard_valid_event_or_fill_quota(speech,settings,event,tmp_path,monkeypatch):
+    model=tmp_path/'model.gguf';model.write_bytes(b'GGUF-test')
+    provider=LocalModelProvider(Tools(llama=sys.executable,semantic_model=str(model),acceleration='cpu'))
+    def window(request,staged,token,progress,stats,decode):
+        rows=[asdict(event), dict(first='R1',peak='R1',last='R1',rank=100,category='Юмор')] if request.response_field=='events' else [verdict(event)]
+        return decode(rows),1000,[],None
+    monkeypatch.setattr(provider,'_window',window)
+    result=provider.analyze(media_for(speech),speech,settings,tmp_path/'cache',Cancellation(),lambda *_:None)
+    assert result.info['complete'] and len(result.candidates)==1
+    assert result.info['invalid_discovery_proposals']==1
+    assert result.candidates[0].end_ms==12000
+    monkeypatch.setattr(provider,'_window',lambda *_:pytest.fail('Valid cache recomputed'))
+    cached=provider.analyze(media_for(speech),speech,settings,tmp_path/'cache',Cancellation(),lambda *_:None)
+    assert cached.candidates==result.candidates and cached.info['invalid_discovery_proposals']==1
