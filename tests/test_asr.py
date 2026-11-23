@@ -14,8 +14,10 @@ from clipnado.media import Tools, probe
 from clipnado.process import Cancellation
 
 
-@pytest.mark.skipif(not os.environ.get("CLIPNADO_TEST_WHISPER") or not os.environ.get("CLIPNADO_TEST_MODEL"), reason="Set local whisper/model paths to run actual Russian ASR")
-def test_actual_russian_recognition_and_cache(tmp_path, monkeypatch):
+pytestmark = pytest.mark.skipif(not os.environ.get("CLIPNADO_TEST_WHISPER") or not os.environ.get("CLIPNADO_TEST_MODEL"), reason="Set local whisper/model paths to run actual Russian ASR")
+
+
+def _actual_recognition(tmp_path, monkeypatch, fine_segments=False):
     tools = Tools(whisper=os.environ["CLIPNADO_TEST_WHISPER"], model=os.environ["CLIPNADO_TEST_MODEL"], threads=2)
     audio = Path(__file__).resolve().parent.parent / "qa" / "russian-human.wav"
     video = tmp_path / "русская речь.mp4"
@@ -29,7 +31,7 @@ def test_actual_russian_recognition_and_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "link", different_volume)
     cache = tmp_path / "Кэш с пробелом ' тест"
     events = []
-    segments, energy, warnings = recognize(media, tools, cache, Cancellation(), lambda p, text: events.append((p, text)))
+    segments, energy, warnings = recognize(media, tools, cache, Cancellation(), lambda p, text: events.append((p, text)), fine_segments=fine_segments)
     text = " ".join(s.text for s in segments).lower()
     assert "китае" in text and "времени" in text and "власти" in text
     assert energy
@@ -37,5 +39,18 @@ def test_actual_russian_recognition_and_cache(tmp_path, monkeypatch):
     assert any("блок 2/2" in text for _, text in events)
     for s in segments:
         s.validate(media.duration_ms)
-    cached = recognize(media, tools, cache, Cancellation(), lambda *_: pytest.fail("Recomputed cached ASR"))
+    cached = recognize(media, tools, cache, Cancellation(), lambda *_: pytest.fail("Recomputed cached ASR"), fine_segments=fine_segments)
     assert cached[0] == segments
+    return segments
+
+
+def test_actual_russian_recognition_and_cache(tmp_path, monkeypatch):
+    _actual_recognition(tmp_path, monkeypatch)
+
+
+def test_actual_russian_fine_segments_and_cache(tmp_path, monkeypatch):
+    segments = _actual_recognition(tmp_path, monkeypatch, fine_segments=True)
+    # Word-boundary segmentation must provide useful cuts, not minute-long rows.
+    assert len(segments) >= 8
+    assert max(s.end_ms-s.start_ms for s in segments) <= 15000
+    assert max(len(s.text) for s in segments) <= 100

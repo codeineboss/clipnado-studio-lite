@@ -29,7 +29,7 @@ from . import __version__
 from .analysis import recognize
 from .export import clip_export_settings, composition_frame, export_clip
 from .gaming import GamingRegionsDialog
-from .profiles import SEARCH_PROFILES, EXPORT_PROFILES, search_profile, export_profile, maximum_seconds
+from .profiles import SEARCH_PROFILES, EXPORT_PROFILES, search_profile, export_profile, maximum_seconds, minimum_seconds
 from .media import Tools, probe, thumbnail
 from .models import EXPORT_LAYOUTS, Candidate, ExportSettings, Project, SearchSettings, Segment, parse_time, timecode
 from .process import Cancellation, Cancelled, run
@@ -220,8 +220,8 @@ class MainWindow(QMainWindow):
         self.count = spin(1, 100, 15)
         self.target_count = spin(1, 100, 10)
         self.min_score = spin(0, 100, 60)
-        self.minimum = spin(15, 90, 15)
-        self.minimum.setToolTip("Автоматический поиск: клипы не короче 15 секунд")
+        self.minimum = spin(10, 90, 10)
+        self.minimum.setToolTip("Новый отбор предпочитает 20–40 секунд, но сохраняет короткий цельный момент от 10 секунд. Минимум можно повысить.")
         self.sensitivity = spin(0, 100, 55)
         self.search_profile = QComboBox()
         self.search_profile.addItem("Свои настройки", "custom")
@@ -231,7 +231,7 @@ class MainWindow(QMainWindow):
         self.search_profile.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.search_profile.setMinimumContentsLength(12)
         self.search_profile.setCurrentIndex(1)
-        self.profile_hint = note(SEARCH_PROFILES["mixed"].description)
+        self.profile_hint = note(SEARCH_PROFILES["highlights"].description)
         form.addRow("Стиль поиска", self.search_profile)
         form.addRow(self.profile_hint)
         self.search_profile.currentIndexChanged.connect(self.search_profile_changed)
@@ -273,7 +273,7 @@ class MainWindow(QMainWindow):
         self.tools_button = button("Проверить FFmpeg / Whisper", self.check_tools)
         sidebar_layout.addWidget(self.tools_button)
         sidebar_layout.addWidget(button("Отчёт о последнем анализе", self.show_analysis_report))
-        sidebar_layout.addWidget(note("Цель по умолчанию: 10 разных клипов с оценкой от 60. При недоборе показывается причина. Локально оцениваются текст и звук; интересность требует просмотра."))
+        sidebar_layout.addWidget(note("Новый отбор: конкретный момент → отдельная редакторская проверка начала и конца. Мат и сильные реакции допустимы. Обычно 20–40 с; до 90 по контексту. Изображение не анализируется, удержание не прогнозируется."))
         sidebar_layout.addStretch()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -791,7 +791,7 @@ class MainWindow(QMainWindow):
             self.start_task(lambda token, progress: probe(Path(path), self.tools, token), self.media_loaded)
 
     def media_loaded(self, media):
-        self.project = Project(media, search=search_profile(SearchSettings(min_seconds=15, max_seconds=90), "mixed"))
+        self.project = Project(media, search=search_profile(SearchSettings(min_seconds=10, max_seconds=90), "highlights"))
         self.boundary_undo.clear()
         self.close_assistant_dialog()
         self.project_path = None
@@ -809,8 +809,9 @@ class MainWindow(QMainWindow):
         self.target_count.setValue(p.search.target_count)
         self.min_score.setValue(p.search.min_score)
         limit = maximum_seconds(p.search.profile)
-        p.search.min_seconds = min(limit, max(15, p.search.min_seconds))
+        p.search.min_seconds = min(limit, max(minimum_seconds(p.search.profile), p.search.min_seconds))
         p.search.max_seconds = limit
+        self.minimum.setMinimum(minimum_seconds(p.search.profile))
         self.minimum.setMaximum(limit)
         self.search_maximum.setText(f"Максимум {limit} с")
         self.minimum.setValue(p.search.min_seconds)
@@ -868,6 +869,7 @@ class MainWindow(QMainWindow):
             return
         code = self.search_profile.currentData()
         limit = maximum_seconds(code)
+        self.minimum.setMinimum(minimum_seconds(code))
         self.minimum.setMaximum(limit)
         self.search_maximum.setText(f"Максимум {limit} с")
         if code == "custom":
@@ -949,18 +951,22 @@ class MainWindow(QMainWindow):
                 tools, backend_warnings = prepare_backend(cpu_tools, token, progress)
                 try:
                     segments, energy, warnings = recognize(project.media, tools, cache, token, progress, project.segments,
-                                                           existing_energy=project.audio_energy)
+                                                           existing_energy=project.audio_energy,
+                                                           fine_segments=settings.profile == "highlights" and not settings.query)
                 except RuntimeError:
                     if not tools.gpu:
                         raise
                     tools.whisper, tools.gpu = cpu_tools.whisper, False
                     progress(0, "Whisper: Vulkan не запустился, продолжаем на CPU…")
                     segments, energy, warnings = recognize(project.media, tools, cache, token, progress, project.segments,
-                                                           existing_energy=project.audio_energy)
+                                                           existing_energy=project.audio_energy,
+                                                           fine_segments=settings.profile == "highlights" and not settings.query)
                     backend_warnings.append("Whisper не запустился на Vulkan; распознавание выполнено на CPU.")
                 speech_seconds = time.monotonic() - started
                 stage = time.monotonic()
-                result = LocalModelProvider(tools, cpu_tools).analyze(project.media, segments, settings, cache, token, progress)
+                provider = LocalModelProvider(tools, cpu_tools)
+                provider.audio_energy = energy
+                result = provider.analyze(project.media, segments, settings, cache, token, progress)
                 candidates = result.candidates
                 warnings = [*warnings, *backend_warnings, *result.warnings]
                 project.analysis_info = {**result.info, "speech_seconds": round(speech_seconds, 2),
@@ -968,6 +974,8 @@ class MainWindow(QMainWindow):
                     "speech_backend": "Vulkan" if tools.gpu else "CPU", "network_used": False}
                 shortfall = (("" if settings.query else shortfall_message(project.media, settings, candidates, bool(segments))) if result.info.get("complete", True)
                     else f"Проверено {result.info.get('checked_windows', 0)} из {result.info.get('total_windows', 0)} участков. Количество найденных клипов промежуточное; повторный поиск продолжит пропущенные участки.")
+                if result.info.get('mode') == 'local-qwen-hooks' and not result.info.get('complete', True):
+                    shortfall = 'Отбор или редакторская проверка завершены частично. Показаны только проверенные клипы; повторный поиск продолжит незавершённые участки.'
                 if shortfall:
                     warnings.append(shortfall)
                 project.segments, project.candidates, project.search = segments, candidates, settings

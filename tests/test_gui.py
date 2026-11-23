@@ -127,6 +127,8 @@ def test_local_only_ui_and_analysis_work_without_network(app, window, long_media
     import socket
     from PySide6.QtWidgets import QLineEdit, QComboBox
     window.media_loaded(media)
+    # This regression covers the saved legacy protocol, not the new reviewer.
+    window.search_profile.setCurrentIndex(window.search_profile.findData('mixed'))
     window.minimum.setValue(1)
     assert not hasattr(window, "key") and not hasattr(window, "provider")
     assert not any("Gemini" in c.currentText() or "Groq" in c.currentText() for c in window.findChildren(QComboBox))
@@ -177,6 +179,49 @@ def test_goal_controls_persist_and_analysis_reports_shortfall(app, window, media
     assert not window.project.candidates
     assert any("0 из целевых 10" in warning for warning in window.project.warnings)
     assert "целевых 10" in window.status.text()
+
+
+def test_hook_default_ui_runs_both_passes_offline_and_preserves_end_at_event(app, window, long_media, tmp_path, monkeypatch):
+    import json
+    import socket
+    import sys
+    window.media_loaded(long_media)
+    assert window.search_settings().profile == 'highlights'
+    model = tmp_path/'model.gguf'; model.write_bytes(b'GGUF-fixture')
+    window.tools.semantic_model = str(model)
+    window.tools.llama = sys.executable
+    window.tools.acceleration = 'cpu'
+    segments = [Segment(0,4000,'Сейчас покажу идеальный прыжок!'),
+                Segment(4000,8000,'Разбегаюсь, обещаю мировой рекорд.'),
+                Segment(8000,12000,'Блядь, я опять упал!')]
+    speech_options = []
+    def speech(*_args, **kwargs):
+        speech_options.append(kwargs.get('fine_segments'))
+        return segments, [(0,.01),(9000,.4)], []
+    monkeypatch.setattr('clipnado.app.recognize', speech)
+    monkeypatch.setattr('clipnado.local_llm.prompt_tokens', lambda *_a, **_k: 1000)
+    monkeypatch.setattr(socket.socket, 'connect', lambda *_a: pytest.fail('Network used'))
+    monkeypatch.setattr(socket, 'create_connection', lambda *_a: pytest.fail('Network used'))
+    passes = []
+    def engine(_args, *_pos, **kwargs):
+        system = (Path(kwargs['cwd'])/'system.txt').read_text(encoding='utf-8')
+        if 'Ты второй редактор' in system:
+            passes.append('review')
+            return json.dumps({'reviews': [dict(id=0, first='R0', last='R2', opening=True, meaningful=True,
+                clean_end=True, standalone=True, needs_visual=False, long_context=False, score=85,
+                reason='Шутка и реакция без лишнего итога.')]})
+        passes.append('discovery')
+        return json.dumps({'events': [dict(first='R0',peak='R2',last='R2',category='Реакция',rank=95)]})
+    monkeypatch.setattr('clipnado.local_llm.run', engine)
+    window.analyze(); wait_task(app, window)
+    assert passes == ['discovery','review'] and speech_options == [True]
+    assert window.project.analysis_info['mode'] == 'local-qwen-hooks'
+    assert not window.project.analysis_info['network_used']
+    assert window.project.analysis_info['audio_hints']
+    assert len(window.project.candidates) == 1
+    clip = window.project.candidates[0]
+    assert clip.end_ms == 12000 and 'Блядь' in clip.transcript_excerpt
+    assert clip.version == 6 and window.table.rowCount() == 1
 
 
 
@@ -558,8 +603,8 @@ def test_search_profiles_new_defaults_change_without_analysis_and_restore_legacy
     from clipnado.models import Candidate
     from clipnado.projects import load_project,save_project
     window.media_loaded(media)
-    assert window.search_settings().profile=='mixed'
-    assert window.minimum.value()==15 and window.search_settings().max_seconds == 90
+    assert window.search_settings().profile=='highlights'
+    assert window.minimum.value()==10 and window.search_settings().max_seconds == 90
     c=Candidate(media.source_file_id,0,3000,80,'Юмор','Существующий клип',selected=True)
     window.project.candidates=[c];window.refresh_candidates()
     window.search_profile.setCurrentIndex(window.search_profile.findData('quote'))

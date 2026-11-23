@@ -59,18 +59,20 @@ def audio_energy(path: Path, offset_ms: int, token: Cancellation | None = None) 
 
 
 def recognize(media: MediaInfo, tools: Tools, cache: Path, token: Cancellation, progress: Progress,
-              existing: list[Segment] | None = None, existing_energy: list | None = None) -> tuple[list[Segment], list[tuple[int, float]], list[str]]:
+              existing: list[Segment] | None = None, existing_energy: list | None = None,
+              fine_segments: bool = False) -> tuple[list[Segment], list[tuple[int, float]], list[str]]:
     if existing:
         energy = existing_energy or []
         if not energy and media.has_audio:
             # Older projects did not retain audio features. Recover them without decoding
-            # or running speech recognition, when the original v4 cache is still present.
+            # or running speech recognition, from either segmentation cache.
             keys = []
             if tools.model and Path(tools.model).is_file():
                 keys.append(fingerprint(Path(tools.model), token))
             keys.append("audio-only")
-            for key in keys:
-                identity = hashlib.sha256((media.source_file_id + key + ":ru:v4").encode()).hexdigest()
+            versions = (":ru:v5-fine80", ":ru:v4") if fine_segments else (":ru:v4", ":ru:v5-fine80")
+            for key, version in ((key, version) for key in keys for version in versions):
+                identity = hashlib.sha256((media.source_file_id + key + version).encode()).hexdigest()
                 path = cache / f"{identity}.json"
                 try:
                     energy = normalized_energy(json.loads(path.read_text(encoding="utf-8"))["energy"], media.duration_ms)
@@ -83,7 +85,7 @@ def recognize(media: MediaInfo, tools: Tools, cache: Path, token: Cancellation, 
     available = bool(tools.model and Path(tools.model).is_file() and (Path(tools.whisper).is_file() or shutil.which(tools.whisper)))
     # Content identity survives extracting an update to another folder and model relocation.
     engine_key = fingerprint(Path(tools.model), token) if available else "audio-only"
-    identity = hashlib.sha256((media.source_file_id + engine_key + ":ru:v4").encode()).hexdigest()
+    identity = hashlib.sha256((media.source_file_id + engine_key + (":ru:v5-fine80" if fine_segments else ":ru:v4")).encode()).hexdigest()
     cache_file = cache / f"{identity}.json"
     if cache_file.exists():
         try:
@@ -153,6 +155,8 @@ def recognize(media: MediaInfo, tools: Tools, cache: Path, token: Cancellation, 
                 output = folder / "speech"
                 args = [tools.whisper, "-m", "model.bin", "-f", "audio.wav", "-l", "ru", "-oj", "-of", "speech",
                         "-t", str(tools.threads), "-np", "-pp", "-bs", "1", "-bo", "1", "-nf"]
+                if fine_segments:
+                    args += ["-ml", "80", "-sow"]
                 if not tools.gpu:
                     args.append("-ng")
                 parser = SpeechProgress(duration)
@@ -170,7 +174,7 @@ def recognize(media: MediaInfo, tools: Tools, cache: Path, token: Cancellation, 
                     b = min(chunk_end, int(item["offsets"]["to"]) + start)
                     text = item["text"].strip()
                     annotation = re.fullmatch(r"[\[\(].*[\]\)]", text)
-                    emotional = re.search(r"смех|сме[её]тся|аплодисмент|laugh", text, re.IGNORECASE)
+                    emotional = re.search(r"смех|сме[её]тся|хохот|аплодисмент|крик|крич|злость|злится|плач|рыда|laugh|shout|scream|angry|cry", text, re.IGNORECASE)
                     if b <= a or b <= chunk_start or not text or (annotation and not emotional):
                         continue
                     if segments:

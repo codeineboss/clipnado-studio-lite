@@ -99,14 +99,19 @@ print('PACKAGED_WINDOW_CREATED',flush=True)
 def no_network(*_a,**_kw):raise RuntimeError('Unexpected network connection')
 socket.socket.connect=no_network;socket.create_connection=no_network
 w.media_loaded(probe(Path('demo/demo.mp4'),w.tools));w.show();w.play_candidate()
-assert w.project.search.profile=='mixed' and w.minimum.value()==15 and w.search_settings().max_seconds==90
+assert w.project.search.profile=='highlights' and w.minimum.value()==10 and w.search_settings().max_seconds==90
 assert w.background_dim.value()==40
 print('PACKAGED_VIDEO_PLAY_START',flush=True)
 stage=[0];original_clip_ids=[];timer=QTimer()
 def protocol_fixture(args,*_a,**kw):
     if args[args.index('-n')+1]=='0':return 'main: number of tokens in prompt = 1000'
+    system=(Path(kw['cwd'])/'system.txt').read_text(encoding='utf-8')
+    if 'Ты редактор мемных' in system:
+        return json.dumps({'events':[dict(first=f'R{i}',peak=f'R{i}',last=f'R{i}',category='Юмор',rank=80) for i in range(2)]})
+    if 'Ты второй редактор' in system:
+        return json.dumps({'reviews':[dict(id=i,first=f'R{i}',last=f'R{i}',opening=True,meaningful=True,clean_end=True,standalone=True,needs_visual=False,long_context=False,score=80,reason='Protocol fixture') for i in range(2)]})
     item={'clip_id':0,'hook':20,'event':20,'emotion':20,'completeness':20,'category':'Юмор','reason':'Protocol fixture'}
-    if 'Это поиск по содержанию' in (Path(kw['cwd'])/'system.txt').read_text(encoding='utf-8'):item['relevance']=90
+    if 'Это поиск по содержанию' in system:item['relevance']=90
     return json.dumps({'clips':[item]})
 def check():
     if stage[0]==0:
@@ -138,7 +143,9 @@ def check():
     elif stage[0]==2 and w.task_thread is None:
         assert w.project.analysis_info['network_used'] is False
         assert w.project.candidates and w.project.candidates[0].provider.startswith('local-qwen:')
-        assert len(w.project.candidates)==2 and w.project.analysis_info['recovery_windows']==1
+        assert len(w.project.candidates)==2 and w.project.analysis_info['mode']=='local-qwen-hooks'
+        assert w.project.analysis_info['reviewed_batches']==1
+        print('PACKAGED_HOOK_REVIEW_OK',flush=True)
         original_clip_ids[:]=[c.id for c in w.project.candidates]
         print('PACKAGED_LOCAL_WORKFLOW_OK',flush=True)
         stage[0]=3;w.content_query.setText('необычный ответ');w.find_by_content()
@@ -259,6 +266,7 @@ result=app.exec();faulthandler.cancel_dump_traceback_later();sys.exit(result)
             "PACKAGED_CENTER_BLACK_EXPORT_OK",
             "PACKAGED_MIXED_GAMING_EXPORT_OK",
             "PACKAGED_LOCAL_WORKFLOW_OK",
+            "PACKAGED_HOOK_REVIEW_OK",
             "PACKAGED_CONTENT_QUERY_PROTOCOL_OK",
             "PACKAGED_BOUNDARY_REVIEW_PROTOCOL_OK",
             "PACKAGED_EXPORT_PREVIEW_OK",

@@ -98,3 +98,34 @@ def test_nineteen_minute_analysis_has_minute_chunks_live_progress_and_resume(tmp
     assert all(a.end_ms <= b.start_ms for a, b in zip(segments, segments[1:]))
     assert segments[-1].end_ms == media.duration_ms
     assert recognize(media, tools, cache, Cancellation(), lambda *_: pytest.fail("Cache was recomputed"))[0] == segments
+
+
+def test_fine_asr_cache_is_separate_and_preserves_strong_reactions(tmp_path, monkeypatch):
+    model = tmp_path / 'model.bin'; model.write_bytes(b'fixture')
+    tools = Tools(whisper=sys.executable, model=str(model))
+    media = MediaInfo('speech.mp4', 'fine-asr', 12000, 1920, 1080, 30, True)
+    calls = []
+    monkeypatch.setattr('clipnado.analysis.extract_audio', lambda _media, _start, _duration, path, *_a, **_k: Path(path).touch())
+    monkeypatch.setattr('clipnado.analysis.audio_energy', lambda *_a: [(0, .1), (4000, .4)])
+    def engine(args, token, cwd, **_kwargs):
+        calls.append(args)
+        texts = ('[музыка]', '[крик]', '[смех]', '[angry]', 'Блядь, это невозможно!')
+        (Path(cwd)/'speech.json').write_text(json.dumps({'transcription': [
+            {'offsets': {'from': i*2000, 'to': (i+1)*2000}, 'text': text}
+            for i, text in enumerate(texts)]}), encoding='utf-8')
+        return ''
+    monkeypatch.setattr('clipnado.analysis.run', engine)
+    cache = tmp_path/'cache'
+    normal = recognize(media, tools, cache, Cancellation(), lambda *_: None)
+    fine = recognize(media, tools, cache, Cancellation(), lambda *_: None, fine_segments=True)
+    assert len(calls) == 2 and '-ml' not in calls[0]
+    assert calls[1][calls[1].index('-ml')+1] == '80' and '-sow' in calls[1]
+    assert [s.text for s in fine[0]] == ['[крик]', '[смех]', '[angry]', 'Блядь, это невозможно!']
+    recognize(media, tools, cache, Cancellation(), lambda *_: pytest.fail('Fine ASR recomputed'), fine_segments=True)
+    # Retained project speech may lack energy. Recover the fine cache without ASR.
+    import hashlib
+    from clipnado.media import fingerprint
+    legacy = hashlib.sha256((media.source_file_id+fingerprint(model,Cancellation())+':ru:v4').encode()).hexdigest()
+    (cache/f'{legacy}.json').unlink()
+    reused = recognize(media, tools, cache, Cancellation(), lambda *_: pytest.fail('Saved speech recomputed'), existing=normal[0])
+    assert reused[0] == normal[0] and [tuple(pair) for pair in reused[1]] == fine[1]
