@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import QSize, Qt, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtMultimedia import QVideoFrame
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QSizePolicy
 
 
 class VideoPreview(QLabel):
@@ -17,8 +17,18 @@ class VideoPreview(QLabel):
         self._last_frame = 0.0
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(160, 200)
+        # A scaled QLabel pixmap changes its size hints. Feeding those hints
+        # back into a layout during Windows widget creation can oscillate
+        # indefinitely. Preview pixels must never determine widget geometry.
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.setStyleSheet("background: black; color: #9aafbd;")
         self.setText("Выберите видео — здесь появится кадр исходника")
+
+    def sizeHint(self):
+        return QSize(640, 360)
+
+    def minimumSizeHint(self):
+        return QSize(160, 200)
 
     def clear_image(self):
         self.image = QImage()

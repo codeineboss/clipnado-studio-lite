@@ -224,6 +224,26 @@ def test_hook_default_ui_runs_both_passes_offline_and_preserves_end_at_event(app
     assert clip.version == 6 and window.table.rowCount() == 1
 
 
+def test_preview_pixels_and_guides_do_not_feed_back_into_layout_geometry(app):
+    from PySide6.QtGui import QImage
+    from clipnado.preview import VideoPreview
+    from clipnado.tiktok_preview import TikTokPreview
+    for kind in (VideoPreview, TikTokPreview):
+        preview = kind()
+        preview.resize(420, 360); preview.show(); app.processEvents()
+        hints = preview.sizeHint(), preview.minimumSizeHint()
+        for width, height in ((1920,1080), (1080,1920), (3000,200), (200,3000)):
+            image = QImage(width,height,QImage.Format_RGB32); image.fill(Qt.red)
+            preview.set_image(image)
+            if isinstance(preview,TikTokPreview):
+                preview.set_guides_enabled(True)
+            app.processEvents()
+            assert (preview.sizeHint(),preview.minimumSizeHint()) == hints
+            assert (preview.width(),preview.height()) == (420,360)
+            assert not preview.pixmap().isNull()
+        preview.close()
+
+
 
 
 
