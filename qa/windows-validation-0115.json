@@ -1,0 +1,81 @@
+{
+  "version": "0.1.15",
+  "repository": "codeineboss/clipnado-studio-lite",
+  "tested_commit": "c05769009aa809d2aeb58e961c2331d2fc9ba49e",
+  "workflow_run": 45084818786,
+  "workflow_url": "https://github.com/codeineboss/clipnado-studio-lite/actions/runs/45084818786",
+  "windows_tests_passed": 218,
+  "windows_tests_skipped": 0,
+  "actual_whisper": true,
+  "actual_qwen": true,
+  "actual_qwen_mixed_short_and_long": true,
+  "actual_portable_gui_verified": true,
+  "shared_production_gui_configuration": true,
+  "automatic_minimum_seconds": 15,
+  "regular_maximum_seconds": 60,
+  "story_maximum_seconds": 90,
+  "mixed_search": true,
+  "constrained_utterance_spans": true,
+  "independent_speech_blocks": true,
+  "bounded_unselected_speech_recovery": true,
+  "built_in_animations": false,
+  "export_subtitles": false,
+  "whisper_transcript_search_preserved": true,
+  "legacy_projects_migrated": true,
+  "empty_lower_zone_verified": true,
+  "individual_clip_layouts_preserved": true,
+  "gaming_regions_editor_verified": true,
+  "gaming_mp4_pixels_verified": true,
+  "target_physical_pc_verified": false,
+  "user_camera_quality_issue_verified": false,
+  "published": true,
+  "published_at": "2026-11-23T01:37:12Z",
+  "release_url": "https://github.com/codeineboss/clipnado-studio-lite/releases/tag/preview-0.1.15",
+  "asset_digests_verified": true,
+  "assets": [
+    {
+      "name": "ClipnadoStudioLite-source.zip",
+      "bytes": 10408231,
+      "sha256": "5287d0698549237c9176e754fd2f3f26e6c84d4b3ddeed669e3ddc62a8fa65da"
+    },
+    {
+      "name": "ClipnadoStudioLite-Windows-x64.zip",
+      "bytes": 463789112,
+      "sha256": "3d7e420ff3ae9d6e7d5e3e562ffda689008b6eba44e7067b4ffb46f27e38810c"
+    },
+    {
+      "name": "QA_REPORT.md",
+      "bytes": 12551,
+      "sha256": "c9acd75e7b94a6a1758a1b2b254f272623d49cf8d77e662aa26a5664ec8878d0"
+    },
+    {
+      "name": "Qwen_Qwen3-4B-Instruct-2507-Q3_K_M.gguf",
+      "bytes": 2075618016,
+      "sha256": "35295e9a0a42eff5ebc592412c754991c0b6cc36bf4f282b2a491b211476752d"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "bytes": 467,
+      "sha256": "8aedddfd72e54691e33cfd2c8033a4cd26702e9b74dc4fcfb7227f9d7dae4db8"
+    },
+    {
+      "name": "START-HERE.md",
+      "bytes": 21727,
+      "sha256": "17b8589e02e9942f343c29e6a43ad4865b2d4feacb8f49c87d4733853b60692d"
+    }
+  ],
+  "test_report_sha256": "875c733e51dd8401b3ae1d60fa1c0462162dc70a19088d1947718190541a12d2",
+  "test_report_artifact_id": 14782981435,
+  "test_report_artifact_sha256": "d38a24da917795d4eea6a2a611e65760707236a4a0ce77674d8f78f885de84d5",
+  "windows_suite_seconds": 6299.457,
+  "tiktok_preview_guides": true,
+  "guides_excluded_from_export": true,
+  "guide_toggle_and_all_layouts_verified": true,
+  "portrait_square_landscape_guides_verified": true,
+  "center_black_export": true,
+  "default_background_dim": 0.4,
+  "foreground_geometry_preserved": true,
+  "saved_background_preferences_preserved": true,
+  "portable_runtime_log_tags_verified": true,
+  "actual_four_layout_queue_verified": true
+}
