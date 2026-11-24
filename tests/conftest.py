@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+    os.environ.setdefault("QT_FFMPEG_DECODING_HW_DEVICE_TYPES", ",")
 
 
 @pytest.fixture(scope="session")

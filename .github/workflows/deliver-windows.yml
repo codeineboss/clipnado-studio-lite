@@ -15,6 +15,9 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 240
     env:
+      # The hosted Windows runner has no usable video decoder device.
+      # Qt 6.8's documented empty hardware list keeps real playback on CPU.
+      QT_FFMPEG_DECODING_HW_DEVICE_TYPES: ','
       CLIPNADO_DATA_DIR: '${{ github.workspace }}/.clipnado-test-data'
       CLIPNADO_TEST_WHISPER: '${{ github.workspace }}/tools/whisper-cli.exe'
       CLIPNADO_TEST_MODEL: '${{ github.workspace }}/models/ggml-base.bin'

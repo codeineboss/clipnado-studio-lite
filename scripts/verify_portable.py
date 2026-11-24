@@ -29,6 +29,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="clipnado-portable-smoke-") as tmp:
         os.environ.update(
             QT_QPA_PLATFORM="offscreen",
+            QT_FFMPEG_DECODING_HW_DEVICE_TYPES=",",
             PYTHONUTF8="1",
             CLIPNADO_DATA_DIR=str(Path(tmp) / "settings"),
             CLIPNADO_QWEN_MODEL=str(args.semantic_model.resolve()),
@@ -107,7 +108,7 @@ w.media_loaded(probe(Path('demo/demo.mp4'),w.tools));w.show();w.play_candidate()
 assert w.project.search.profile=='mixed' and w.minimum.value()==15 and w.search_settings().max_seconds==90
 assert w.background_dim.value()==40
 print('PACKAGED_VIDEO_PLAY_START',flush=True)
-stage=[0];original_clip_ids=[];timer=QTimer()
+stage=[0];original_clip_ids=[];playback_frames=[0];timer=QTimer()
 def protocol_fixture(args,*_a,**kw):
     if args[args.index('-n')+1]=='0':return 'main: number of tokens in prompt = 1000'
     item={'clip_id':0,'hook':20,'event':20,'emotion':20,'completeness':20,'category':'Юмор','reason':'Protocol fixture'}
@@ -117,7 +118,15 @@ def check():
     if stage[0]==0:
         if w.video.frame_count<1 or w.player.position()<100 or w.video.image.isNull():return
         print('PACKAGED_VIDEO_PIXELS_OK',flush=True)
-        w.player.pause();w.player.setPosition(0);w.minimum.setValue(2)
+        print('PACKAGED_PAUSE_START',flush=True)
+        w.player.pause();print('PACKAGED_PAUSE_OK',flush=True)
+        w.player.setPosition(0);print('PACKAGED_SEEK_OK',flush=True)
+        playback_frames[0]=w.video.frame_count;stage[0]=-1;w.player.play()
+    elif stage[0]==-1:
+        if w.player.position()<100 or w.video.frame_count<=playback_frames[0]:return
+        print('PACKAGED_RESUME_OK',flush=True)
+        w.player.pause()
+        w.minimum.setValue(2)
         w.project.candidates=[Candidate(w.project.media.source_file_id,0,2000,80,'Юмор','Portable export',selected=True) for _ in range(4)]
         w.refresh_candidates();w.export_clips.cellWidget(1,3).setCurrentIndex(1);w.export_clips.cellWidget(2,3).setCurrentIndex(2)
         w.export_clips.cellWidget(3,3).setCurrentIndex(3)
@@ -268,6 +277,9 @@ result=app.exec();faulthandler.cancel_dump_traceback_later();sys.exit(result)
         output = execute(code, 210, [Path(tmp) / "export"])
         required = (
             "PACKAGED_VIDEO_PIXELS_OK",
+            "PACKAGED_PAUSE_OK",
+            "PACKAGED_SEEK_OK",
+            "PACKAGED_RESUME_OK",
             "PACKAGED_UI_CONFIGURED_OK",
             "PACKAGED_TIKTOK_GUIDES_OK",
             "PACKAGED_CENTER_BLACK_EXPORT_OK",
