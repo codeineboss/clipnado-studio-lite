@@ -34,7 +34,7 @@ def test_search_profiles_preserve_goals_and_offer_context(code):
     p = SEARCH_PROFILES[code]
     assert (result.min_seconds, result.max_seconds, result.profile) == (
         60,
-        90 if code in ("story", "mixed", "highlights") else 60,
+        90 if code in ("story", "mixed") else 60,
         code,
     )
     assert (result.count, result.target_count, result.min_score, result.query) == (
@@ -50,7 +50,7 @@ def test_search_profiles_preserve_goals_and_offer_context(code):
         for i in range(60)
     ]
     request = build_request(media, segments, result, 0, len(segments), 1)
-    assert (p.instruction in request.system) == (code != 'highlights')
+    assert p.instruction in request.system
     assert request.proposals
     assert all(
         result.min_seconds * 1000 <= x.end_ms - x.start_ms <= 90000

@@ -35,6 +35,9 @@ def load_project(path: Path) -> Project:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         search = dict(data.get("search", {}))
+        retired_highlights = search.get("profile") == "highlights"
+        if retired_highlights:
+            search["profile"] = "mixed"
         # An old project may intentionally show fewer than ten candidates.
         search.setdefault("target_count", min(10, search.get("count", 15)))
         export = dict(data.get("export", {}))
@@ -52,6 +55,12 @@ def load_project(path: Path) -> Project:
                     item["export_layout"] = "gaming_split"
                     migrated = True
         warnings = list(data.get("warnings", []))
+        if retired_highlights:
+            warning = ("Для следующего поиска восстановлен метод 0.1.15 «Мемы и истории · авто». "
+                       "Найденные клипы, их границы, отметки и расшифровка сохранены. "
+                       "Чтобы заново выбрать моменты, нажмите «Найти эпизоды».")
+            if warning not in warnings:
+                warnings.append(warning)
         if retired_animation not in (None, "off"):
             warning = "Встроенные анимации удалены. Нижняя зона остаётся свободной для вашего монтажа."
             if warning not in warnings:
@@ -68,13 +77,11 @@ def load_project(path: Path) -> Project:
                           query_results=[candidate_from_dict(c) for c in data.get("query_results", [])],
                           last_query=data.get("last_query", ""), query_info=data.get("query_info", {}))
         project.validate()
-        from .profiles import minimum_seconds
-        minimum = minimum_seconds(project.search.profile)
-        if project.search.min_seconds < minimum:
-            project.search.min_seconds = minimum
+        if project.search.min_seconds < 15:
+            project.search.min_seconds = 15
             if project.search.max_seconds is not None:
-                project.search.max_seconds = max(minimum, project.search.max_seconds)
-            warning = f"Минимальная длина автоматического поиска поднята до {minimum} секунд. Существующие клипы сохранены."
+                project.search.max_seconds = max(15, project.search.max_seconds)
+            warning = "Минимальная длина автоматического поиска поднята до 15 секунд. Существующие клипы сохранены."
             if warning not in project.warnings:
                 project.warnings.append(warning)
         return project

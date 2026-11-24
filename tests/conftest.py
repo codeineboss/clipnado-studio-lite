@@ -49,8 +49,4 @@ def long_media(source, tools, tmp_path_factory):
 def pytest_collection_modifyitems(items):
     # Exercise the changed real-model path before the older long native cases.
     # The complete suite still runs on success; release validation requires it.
-    priority = {'test_actual_qwen_hooks_find_event_reject_chatter_and_cache': 0,
-                'test_actual_qwen_critic_rejects_high_rank_ordinary_dialogue': 1,
-                'test_actual_russian_fine_segments_and_cache': 2,
-                'test_actual_qwen_mixed_short_meme_and_long_story_and_cache': 3}
-    items.sort(key=lambda item: priority.get(item.name, 4))
+    items.sort(key=lambda item: item.name != 'test_actual_qwen_mixed_short_meme_and_long_story_and_cache')

@@ -127,8 +127,6 @@ def test_local_only_ui_and_analysis_work_without_network(app, window, long_media
     import socket
     from PySide6.QtWidgets import QLineEdit, QComboBox
     window.media_loaded(media)
-    # This regression covers the saved legacy protocol, not the new reviewer.
-    window.search_profile.setCurrentIndex(window.search_profile.findData('mixed'))
     window.minimum.setValue(1)
     assert not hasattr(window, "key") and not hasattr(window, "provider")
     assert not any("Gemini" in c.currentText() or "Groq" in c.currentText() for c in window.findChildren(QComboBox))
@@ -179,69 +177,6 @@ def test_goal_controls_persist_and_analysis_reports_shortfall(app, window, media
     assert not window.project.candidates
     assert any("0 из целевых 10" in warning for warning in window.project.warnings)
     assert "целевых 10" in window.status.text()
-
-
-def test_hook_default_ui_runs_both_passes_offline_and_preserves_end_at_event(app, window, long_media, tmp_path, monkeypatch):
-    import json
-    import socket
-    import sys
-    window.media_loaded(long_media)
-    assert window.search_settings().profile == 'highlights'
-    model = tmp_path/'model.gguf'; model.write_bytes(b'GGUF-fixture')
-    window.tools.semantic_model = str(model)
-    window.tools.llama = sys.executable
-    window.tools.acceleration = 'cpu'
-    segments = [Segment(0,4000,'Сейчас покажу идеальный прыжок!'),
-                Segment(4000,8000,'Разбегаюсь, обещаю мировой рекорд.'),
-                Segment(8000,12000,'Блядь, я опять упал!')]
-    speech_options = []
-    def speech(*_args, **kwargs):
-        speech_options.append(kwargs.get('fine_segments'))
-        return segments, [(0,.01),(9000,.4)], []
-    monkeypatch.setattr('clipnado.app.recognize', speech)
-    monkeypatch.setattr('clipnado.local_llm.prompt_tokens', lambda *_a, **_k: 1000)
-    monkeypatch.setattr(socket.socket, 'connect', lambda *_a: pytest.fail('Network used'))
-    monkeypatch.setattr(socket, 'create_connection', lambda *_a: pytest.fail('Network used'))
-    passes = []
-    def engine(_args, *_pos, **kwargs):
-        system = (Path(kwargs['cwd'])/'system.txt').read_text(encoding='utf-8')
-        if 'Ты второй редактор' in system:
-            passes.append('review')
-            return json.dumps({'reviews': [dict(id=0, first='R0', last='R2', opening=True, meaningful=True,
-                clean_end=True, standalone=True, needs_visual=False, long_context=False, score=85,
-                reason='Шутка и реакция без лишнего итога.')]})
-        passes.append('discovery')
-        return json.dumps({'events': [dict(first='R0',peak='R2',last='R2',category='Реакция',rank=95)]})
-    monkeypatch.setattr('clipnado.local_llm.run', engine)
-    window.analyze(); wait_task(app, window)
-    assert passes == ['discovery','review'] and speech_options == [True]
-    assert window.project.analysis_info['mode'] == 'local-qwen-hooks'
-    assert not window.project.analysis_info['network_used']
-    assert window.project.analysis_info['audio_hints']
-    assert len(window.project.candidates) == 1
-    clip = window.project.candidates[0]
-    assert clip.end_ms == 12000 and 'Блядь' in clip.transcript_excerpt
-    assert clip.version == 6 and window.table.rowCount() == 1
-
-
-def test_preview_pixels_and_guides_do_not_feed_back_into_layout_geometry(app):
-    from PySide6.QtGui import QImage
-    from clipnado.preview import VideoPreview
-    from clipnado.tiktok_preview import TikTokPreview
-    for kind in (VideoPreview, TikTokPreview):
-        preview = kind()
-        preview.resize(420, 360); preview.show(); app.processEvents()
-        hints = preview.sizeHint(), preview.minimumSizeHint()
-        for width, height in ((1920,1080), (1080,1920), (3000,200), (200,3000)):
-            image = QImage(width,height,QImage.Format_RGB32); image.fill(Qt.red)
-            preview.set_image(image)
-            if isinstance(preview,TikTokPreview):
-                preview.set_guides_enabled(True)
-            app.processEvents()
-            assert (preview.sizeHint(),preview.minimumSizeHint()) == hints
-            assert (preview.width(),preview.height()) == (420,360)
-            assert not preview.pixmap().isNull()
-        preview.close()
 
 
 
@@ -623,8 +558,8 @@ def test_search_profiles_new_defaults_change_without_analysis_and_restore_legacy
     from clipnado.models import Candidate
     from clipnado.projects import load_project,save_project
     window.media_loaded(media)
-    assert window.search_settings().profile=='highlights'
-    assert window.minimum.value()==10 and window.search_settings().max_seconds == 90
+    assert window.search_settings().profile=='mixed'
+    assert window.minimum.value()==15 and window.search_settings().max_seconds == 90
     c=Candidate(media.source_file_id,0,3000,80,'Юмор','Существующий клип',selected=True)
     window.project.candidates=[c];window.refresh_candidates()
     window.search_profile.setCurrentIndex(window.search_profile.findData('quote'))
@@ -823,3 +758,38 @@ def test_center_black_choice_and_saved_brightness_roundtrip(app, window, media, 
     assert window.background_dim.value() == 40
     assert window.project.candidates[0].export_layout == 'center_black'
     assert not hasattr(window, 'subtitle_mode')
+
+
+def test_preview_pixels_and_guides_do_not_feed_back_into_layout_geometry(app):
+    from PySide6.QtGui import QImage
+    from clipnado.preview import VideoPreview
+    from clipnado.tiktok_preview import TikTokPreview
+    for kind in (VideoPreview, TikTokPreview):
+        preview = kind()
+        preview.resize(420, 360); preview.show(); app.processEvents()
+        hints = preview.sizeHint(), preview.minimumSizeHint()
+        for width, height in ((1920,1080), (1080,1920), (3000,200), (200,3000)):
+            image = QImage(width,height,QImage.Format_RGB32); image.fill(Qt.red)
+            preview.set_image(image)
+            if isinstance(preview,TikTokPreview):
+                preview.set_guides_enabled(True)
+            app.processEvents()
+            assert (preview.sizeHint(),preview.minimumSizeHint()) == hints
+            assert (preview.width(),preview.height()) == (420,360)
+            assert not preview.pixmap().isNull()
+        preview.close()
+
+
+def test_016_project_load_restores_015_controls_without_reediting_clips(app,window,media,tmp_path,monkeypatch):
+    import json
+    from test_restored_selection import project_fixture
+    original=project_fixture(media);data=original.to_dict()
+    data['search'].update(profile='highlights',min_seconds=10)
+    path=tmp_path/'проект 0.1.16.json';path.write_text(json.dumps(data),encoding='utf-8')
+    monkeypatch.setattr('clipnado.app.recognize',lambda *_a,**_k:pytest.fail('Loading must not restart ASR'))
+    window.load_project_path(path);wait_task(app,window)
+    assert window.search_profile.currentData()=='mixed' and window.search_profile.findData('highlights')==-1
+    assert window.minimum.value()==15 and window.search_settings().max_seconds==90
+    assert window.project.candidates==original.candidates and window.project.segments==original.segments
+    assert window.project.export==original.export and window.table.rowCount()==2
+    assert window.export_clips.rowCount()==1 and window.export_clips.cellWidget(0,3).currentIndex()==3

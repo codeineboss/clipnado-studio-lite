@@ -34,10 +34,10 @@ def choose_candidates(candidates: list[Candidate], settings: SearchSettings, tok
     pool = sorted(unique.values(), key=lambda c: (c.end_ms, c.start_ms, -c.score))
     if not pool:
         return []
-    if settings.profile in ("mixed", "highlights"):
+    if settings.profile == "mixed":
         # Preserve a stronger complete story when weaker excerpts overlap it.
         # A target count must not force an otherwise good episode into pieces.
-        chosen = sorted(pool, key=lambda c: (-c.score, 0 if 20000 <= c.end_ms-c.start_ms <= 40000 else 1, c.end_ms-c.start_ms, c.start_ms)) if settings.profile == "highlights" else sorted(pool, key=lambda c: (-c.score, c.start_ms, c.end_ms))
+        chosen = sorted(pool, key=lambda c: (-c.score, c.start_ms, c.end_ms))
     else:
         ends = [c.end_ms for c in pool]
         previous = [bisect.bisect_right(ends, c.start_ms, hi=i) for i, c in enumerate(pool)]
@@ -90,7 +90,7 @@ def choose_candidates(candidates: list[Candidate], settings: SearchSettings, tok
         selected.append(c)
         texts.append(words)
         exact_texts.add(exact)
-    for c in (chosen if settings.profile == "highlights" else sorted(chosen, key=lambda c: (-c.score, c.start_ms))):
+    for c in sorted(chosen, key=lambda c: (-c.score, c.start_ms)):
         token.check()
         if len(selected) >= settings.count * 3:
             break

@@ -16,16 +16,8 @@ class SearchProfile:
 SEARCH_PROFILE_VERSION = 12
 
 SEARCH_PROFILES = {
-    "highlights": SearchProfile(
-        "Сильное начало · авто",
-        "Зацеп в первых 2–4 секундах по речи (тайминг приблизительный). Обычно 20–40 секунд; цельный момент от 10 до 90 секунд. Отдельная редакторская проверка, без обязательного рассказа или дополнительного итога. Изображение и интонация не распознаются.",
-        "Сначала конкретный момент и сильное начало, затем минимально достаточные границы. "
-        "Мат, оскорбления, смех, злость и другие сильные реакции допустимы и могут быть самим событием. "
-        "Останавливай клип после события или ценной реакции, не дописывай развязку ради формы.",
-        max_seconds=90,
-    ),
     "mixed": SearchProfile(
-        "Мемы и истории · прежний отбор",
+        "Мемы и истории · авто",
         "Один поиск: короткие шутки, неожиданные события, реакции и законченные истории. От 15 секунд; до 60 для обычных моментов, до 90 для историй с нужным контекстом.",
         "Стиль: смешанная подборка из одной записи. "
         "Сначала найди отдельные события по смыслу: одна шутка и другой рассказ должны стать отдельными клипами. "
@@ -84,16 +76,12 @@ def maximum_seconds(code):
     return SEARCH_PROFILES[code].max_seconds if code in SEARCH_PROFILES else 60
 
 
-def minimum_seconds(code):
-    return 10 if code == "highlights" else 15
-
-
 def search_profile(settings, code):
     if not isinstance(code, str) or code not in SEARCH_PROFILES:
         raise ValueError("Неизвестный профиль поиска")
     result = replace(
         settings,
-        min_seconds=min(maximum_seconds(code), max(minimum_seconds(code), settings.min_seconds)),
+        min_seconds=min(maximum_seconds(code), max(15, settings.min_seconds)),
         max_seconds=maximum_seconds(code),
         profile=code,
     )
