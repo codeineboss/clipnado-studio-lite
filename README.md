@@ -88,7 +88,7 @@
 ## Скачать и открыть
 
 <!-- WINDOWS_VALIDATION_START -->
-Исправление 0.1.18 проходит проверку Windows. До завершения доступен [предыдущий выпуск 0.1.17](https://github.com/codeineboss/clipnado-studio-lite/releases/tag/preview-0.1.17).
+**Windows: пройдено тестов — 231, ошибок и пропусков нет.** [Полный набор](https://github.com/codeineboss/clipnado-studio-lite/actions/runs/45774886916), [готовый пакет](https://github.com/codeineboss/clipnado-studio-lite/actions/runs/45774886916). Восстановление UTF-8, продолжение распознавания, поиск 0.1.15 и настоящие модели проверены. Подробности: [QA_REPORT.md](QA_REPORT.md).
 <!-- WINDOWS_VALIDATION_END -->
 
 1. Полностью распакуйте [Windows x64 ZIP](https://github.com/codeineboss/clipnado-studio-lite/releases/download/preview-0.1.18/ClipnadoStudioLite-Windows-x64.zip).
