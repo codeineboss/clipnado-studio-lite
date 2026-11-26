@@ -81,6 +81,15 @@ from clipnado.process import Cancellation,run
 from clipnado.gaming import GamingRegionsDialog,source_frame
 from scripts.gaming_smoke import CAMERA,GAME,make_fixture
 import clipnado.local_llm as llm
+from clipnado.whisper_output import read_whisper_output
+utf8_folder=Path(sys.argv[1])/'utf8-check';utf8_folder.mkdir(parents=True,exist_ok=True)
+utf8_raw=json.dumps({'transcription':[{'offsets':{'from':0,'to':60000},'text':'До BAD_UTF8 после'}]},ensure_ascii=False).encode('utf-8').replace(b'BAD_UTF8',b'\xb3')
+utf8_path=utf8_folder/'speech.json';utf8_path.write_bytes(utf8_raw)
+utf8_diag=utf8_folder/'original.raw'
+utf8_data,utf8_warnings=read_whisper_output(utf8_path,utf8_diag,60000,120000)
+assert utf8_data['transcription'][0]['text']=='До � после' and utf8_warnings
+assert utf8_diag.read_bytes()==utf8_raw
+print('PACKAGED_WHISPER_UTF8_RECOVERY_OK',flush=True)
 faulthandler.enable()
 faulthandler.dump_traceback_later(90,repeat=True)
 print('PACKAGED_GUI_IMPORTS_OK',flush=True)
@@ -276,6 +285,7 @@ result=app.exec();faulthandler.cancel_dump_traceback_later();sys.exit(result)
 """
         output = execute(code, 210, [Path(tmp) / "export"])
         required = (
+            "PACKAGED_WHISPER_UTF8_RECOVERY_OK",
             "PACKAGED_VIDEO_PIXELS_OK",
             "PACKAGED_PAUSE_OK",
             "PACKAGED_SEEK_OK",

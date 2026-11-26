@@ -78,6 +78,9 @@ def test_nineteen_minute_analysis_has_minute_chunks_live_progress_and_resume(tmp
         recognize(media, tools, cache, active_token, lambda p, message: events.append((p, message)))
     saved = json.loads(next(cache.glob("*.checkpoint.json")).read_text(encoding="utf-8"))
     assert saved["next_start_ms"] == 120000
+    # Projects interrupted in 0.1.17 have no warning field in the checkpoint.
+    saved.pop("warnings", None)
+    next(cache.glob("*.checkpoint.json")).write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
     assert any(0 < p < 80 and "Whisper" in message for p, message in events)
     assert any("ждём первый результат" in message for _, message in events)
     should_cancel[0] = False

@@ -14,6 +14,7 @@ from .media import Tools, extract_audio, fingerprint, require_space
 from .models import Candidate, MediaInfo, SearchSettings, Segment, normalized_energy, timecode
 from .process import Cancellation, Progress, run
 from .projects import atomic_json
+from .whisper_output import read_whisper_output
 
 CHUNK_MS = 60000
 
@@ -114,6 +115,10 @@ def recognize(media: MediaInfo, tools: Tools, cache: Path, token: Cancellation, 
                                                   or not isinstance(e, (int, float)) or not math.isfinite(e)
                                                   for t, e in energy):
                 raise ValueError("Повреждённый кэш звука")
+            saved_warnings = saved.get("warnings", [])
+            if not isinstance(saved_warnings, list) or not all(isinstance(item, str) for item in saved_warnings):
+                raise ValueError("Повреждённые предупреждения распознавания")
+            warnings.extend(item for item in saved_warnings if item not in warnings)
         except (KeyError, TypeError, ValueError):
             completed_ms, segments, energy = 0, [], []
     progress(int(completed_ms / media.duration_ms * 80),
@@ -164,7 +169,10 @@ def recognize(media: MediaInfo, tools: Tools, cache: Path, token: Cancellation, 
                     progress(known, f"Whisper {mode} · {timecode(recognized)[:-4]} / {timecode(media.duration_ms)[:-4]}"
                              f" · блок {block} · прошло {timecode(int(elapsed * 1000))[:-4]}{waiting}")
                 run(args, token, cwd=folder, on_output=speech_output, timeout=1800)
-                data = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+                data, output_warnings = read_whisper_output(
+                    output.with_suffix(".json"), cache / f"{identity}.speech-{chunk_start}.raw",
+                    chunk_start, chunk_end)
+                warnings.extend(output_warnings)
                 for item in data.get("transcription", []):
                     a = max(chunk_start, int(item["offsets"]["from"]) + start)
                     b = min(chunk_end, int(item["offsets"]["to"]) + start)
@@ -180,7 +188,8 @@ def recognize(media: MediaInfo, tools: Tools, cache: Path, token: Cancellation, 
                 output.with_suffix(".json").unlink(missing_ok=True)
             wav.unlink(missing_ok=True)
             atomic_json(checkpoint, {"chunk_ms": CHUNK_MS, "next_start_ms": chunk_end,
-                                    "segments": [s.__dict__ for s in segments], "energy": energy})
+                                    "segments": [s.__dict__ for s in segments], "energy": energy,
+                                    "warnings": warnings})
             progress(int(chunk_end / media.duration_ms * 80),
                      f"Сохранено {timecode(chunk_end)[:-4]} / {timecode(media.duration_ms)[:-4]} · блок {block}")
     if available and not segments:
