@@ -82,7 +82,7 @@ def test_native_window_failure_preserves_results_full_diagnostic_and_resume(tmp_
     provider=LocalModelProvider(tools)
     result=provider.analyze(media,segments,SearchSettings(),cache,Cancellation(),lambda *_:None)
     assert result.candidates and result.info['failed_windows']==1 and not result.info['complete']
-    path=next(cache.rglob('*.failed.json'));diagnostic=json.loads(path.read_text())
+    path=next(cache.rglob('*.failed.json'));diagnostic=json.loads(path.read_text(encoding='utf-8'))
     assert full in diagnostic['outputs'] and 'код 1' in diagnostic['error']
     assert len(result.warnings[0])<700 and '19 -> 4' not in result.warnings[0]
     ids={c.id for c in result.candidates};before=len(calls)
