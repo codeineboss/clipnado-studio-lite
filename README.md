@@ -4,8 +4,7 @@
 
 
 <!-- WINDOWS_VALIDATION_START -->
-**0.1.19: исходники обновлены, Windows-архив ещё не опубликован.** GitHub отклонил запуск сборки до выделения машины из-за оплаты/лимита Actions аккаунта: [запуск 45924856668](https://github.com/codeineboss/clipnado-studio-lite/actions/runs/45924856668). После восстановления нужно запустить новый workflow из актуальной main; старый остановленный запуск относится к предыдущей ревизии. Для окончательной проверки и публикации требуется восстановить Actions в [Billing & plans](https://github.com/settings/billing). Проверки нового готового Windows-пакета пока не проводились. [Последний проверенный Windows-выпуск — 0.1.18](https://github.com/codeineboss/clipnado-studio-lite/releases/tag/preview-0.1.18); новые функции описаны для исходников 0.1.19.
-Локально на Linux прошли 229 проверок и отдельно два теста настоящей Qwen; подробности и ограничения — в [QA_REPORT.md](QA_REPORT.md). Это не проверка готового Windows-пакета.
+**Windows: пройдено тестов — 238, ошибок и пропусков нет.** [Полный набор](https://github.com/codeineboss/clipnado-studio-lite/actions/runs/45930592749), [готовый пакет](https://github.com/codeineboss/clipnado-studio-lite/actions/runs/45930592749). Хук первых секунд, ручной редактор, экспорт изменённого отрезка, UTF-8 и настоящие модели проверены. Подробности: [QA_REPORT.md](QA_REPORT.md).
 <!-- WINDOWS_VALIDATION_END -->
 
 ## Хук первых секунд и ручные границы
