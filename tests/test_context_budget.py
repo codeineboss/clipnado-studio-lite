@@ -139,7 +139,7 @@ def test_unfittable_utterance_does_not_abort_other_windows(tools, tmp_path, monk
 
 
 @pytest.mark.parametrize("empty", [False, True])
-def test_compatible_015_windows_are_reused_without_model_calls(tools, tmp_path, monkeypatch, empty):
+def test_legacy_selection_cache_recomputed_for_hook_criteria(tools, tmp_path, monkeypatch, empty):
     segments = [Segment(i * 10000, (i + 1) * 10000, str(i)) for i in range(12)]
     media, settings, token = media_for(segments), SearchSettings(), Cancellation()
     model_id = llm.model_identity(Path(tools.semantic_model), token)
@@ -150,13 +150,18 @@ def test_compatible_015_windows_are_reused_without_model_calls(tools, tmp_path, 
     request = llm.build_request(media, segments, settings, 0, len(segments), 1)
     candidates = [] if empty else llm.decode_choices([choice()], media, segments, settings, request.proposals, model_id)
     (folder / "window-0.json").write_text(json.dumps([asdict(c) for c in candidates]), encoding="utf-8")
-    def fail(*_a, **_k):
-        pytest.fail("Compatible completed 0.1.5 window was recomputed")
-    monkeypatch.setattr(llm, "prompt_tokens", fail)
-    monkeypatch.setattr(llm, "run", fail)
+    original = (folder / "window-0.json").read_bytes()
+    calls = []
+    monkeypatch.setattr(llm, "prompt_tokens", lambda *_a, **_k: 1000)
+    def generate(*_a, **_k):
+        calls.append(True)
+        return json.dumps({'clips':[choice()]})
+    monkeypatch.setattr(llm, "run", generate)
     result = llm.LocalModelProvider(tools).analyze(media, segments, settings, tmp_path / "cache", token, lambda *_: None)
-    assert result.info["complete"] and result.info["cached_windows"] == 1
-    assert [c.id for c in result.candidates] == [c.id for c in candidates]
+    assert result.info["complete"] and result.info["cached_windows"] == 0 and len(calls)==1
+    assert result.candidates and (folder / 'window-0.json').read_bytes()==original
+    again = llm.LocalModelProvider(tools).analyze(media, segments, settings, tmp_path / "cache", token, lambda *_: None)
+    assert again.candidates==result.candidates and len(calls)==1
 
 
 def test_split_ranges_terminate_and_cover_every_source_row():

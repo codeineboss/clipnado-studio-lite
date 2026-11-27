@@ -1,5 +1,7 @@
-# Keep the verified 0.1.15 source hashes identical in Windows packages.
+# Keep release source fingerprints identical in Windows packages.
 clipnado/app.py text eol=lf
 clipnado/local_llm.py text eol=lf
 clipnado/selection.py text eol=lf
 clipnado/profiles.py text eol=lf
+clipnado/clip_editor.py text eol=lf
+clipnado/assist.py text eol=lf

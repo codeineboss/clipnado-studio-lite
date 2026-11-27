@@ -16,10 +16,10 @@ def main():
     parser.add_argument("--semantic-model", required=True, type=Path)
     args = parser.parse_args()
     root = args.folder.resolve()
-    from finalize_windows_release import SELECTION_BASELINE_SHA256, digest
-    for name, expected in SELECTION_BASELINE_SHA256.items():
+    from finalize_windows_release import EXPECTED_SOURCE_SHA256, digest
+    for name, expected in EXPECTED_SOURCE_SHA256.items():
         if digest(root / 'clipnado' / name) != expected:
-            raise RuntimeError('Packaged selection differs from 0.1.15: ' + name)
+            raise RuntimeError('Packaged application source mismatch: ' + name)
     python = root / "runtime/python.exe"
     # This process needs only the standard-library runner, not source-environment Qt.
     sys.path.insert(0, str(root))
@@ -163,7 +163,7 @@ def check():
         assert w.project.candidates and w.project.candidates[0].provider.startswith('local-qwen:')
         assert len(w.project.candidates)==2 and w.project.analysis_info['recovery_windows']==1
         assert w.project.search.profile=='mixed' and w.project.analysis_info['mode']=='local-qwen'
-        print('PACKAGED_015_SELECTION_OK',flush=True)
+        print('PACKAGED_HOOK_SELECTION_PROTOCOL_OK',flush=True)
         original_clip_ids[:]=[c.id for c in w.project.candidates]
         print('PACKAGED_LOCAL_WORKFLOW_OK',flush=True)
         stage[0]=3;w.content_query.setText('необычный ответ');w.find_by_content()
@@ -273,6 +273,37 @@ def check():
         assert migrated.candidates==saved.candidates and migrated.segments==saved.segments
         assert migrated.export==saved.export
         print('PACKAGED_016_PROJECT_MIGRATION_OK',flush=True)
+        timer.stop();w.table.selectRow(0)
+        from clipnado.clip_editor import ClipEditorDialog
+        import copy
+        original=copy.deepcopy(w.project.candidates[0]);editor_timer=QTimer(w);editor_ticks=[0];editor_pixels=[False]
+        def edit_interval():
+            d=next((d for d in w.findChildren(ClipEditorDialog) if d.isVisible()),None)
+            if d is None:return
+            editor_ticks[0]+=1
+            if editor_ticks[0]==1:d.play_context()
+            if d.video.frame_count and not d.video.image.isNull() and d.player.position()>100:
+                editor_pixels[0]=True;d.player.pause()
+                d.start.setText('00:00.500');d.end.setText('00:04.500')
+                assert d.bounds()==(500,4500)
+                editor_timer.stop();d.accept()
+            elif editor_ticks[0]>400:
+                editor_timer.stop();d.reject()
+        editor_timer.timeout.connect(edit_interval);editor_timer.start(30)
+        w.edit_selected_clip();editor_timer.stop();editor_timer.deleteLater()
+        revised=w.project.candidates[0]
+        assert editor_pixels[0] and (revised.start_ms,revised.end_ms)==(500,4500)
+        assert revised.id==original.id and revised.selected==original.selected and revised.export_layout==original.export_layout
+        save_project(w.project,Path(sys.argv[1])/'manual.json')
+        assert load_project(Path(sys.argv[1])/'manual.json').candidates[0]==revised
+        print('PACKAGED_MANUAL_EDITOR_PIXELS_APPLY_OK',flush=True)
+        stage[0]=10;w.export_folder.setText(str(Path(sys.argv[1])/'manual'));w.export_selected();timer.start(50)
+    elif stage[0]==10 and w.task_thread is None:
+        files=list((Path(sys.argv[1])/'manual').glob('*.mp4'));assert len(files)==1
+        assert abs(probe(files[0],w.tools).duration_ms-4000)<200
+        w.undo_boundaries()
+        assert (w.project.candidates[0].start_ms,w.project.candidates[0].end_ms)==(1000,4000)
+        print('PACKAGED_MANUAL_BOUNDS_EXPORT_UNDO_OK',flush=True)
         timer.stop();w.dirty=False;w.close();app.quit()
 def deadline():
     print('PACKAGED_GUI_DEADLINE',stage[0],w.player.position(),w.video.frame_count,w.player.errorString(),flush=True)
@@ -295,7 +326,9 @@ result=app.exec();faulthandler.cancel_dump_traceback_later();sys.exit(result)
             "PACKAGED_CENTER_BLACK_EXPORT_OK",
             "PACKAGED_MIXED_GAMING_EXPORT_OK",
             "PACKAGED_LOCAL_WORKFLOW_OK",
-            "PACKAGED_015_SELECTION_OK",
+            "PACKAGED_HOOK_SELECTION_PROTOCOL_OK",
+            "PACKAGED_MANUAL_EDITOR_PIXELS_APPLY_OK",
+            "PACKAGED_MANUAL_BOUNDS_EXPORT_UNDO_OK",
             "PACKAGED_016_PROJECT_MIGRATION_OK",
             "PACKAGED_CONTENT_QUERY_PROTOCOL_OK",
             "PACKAGED_BOUNDARY_REVIEW_PROTOCOL_OK",

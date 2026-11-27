@@ -83,12 +83,12 @@ def test_decoder_uses_generated_json_after_log_or_prompt_echo():
         response_json('{"clips":[{"first":')
 
 
-def test_model_choice_uses_only_offered_bounds_and_preserves_scores(dialogue):
+def test_model_choice_uses_only_offered_bounds_and_weighted_scores(dialogue):
     media = MediaInfo("file.mp4", "id", 120000, 1920, 1080, 30, True)
     proposals = clip_proposals(media, dialogue, SearchSettings(), 0, len(dialogue))
     clips = decode_choices([item(), item()], media, dialogue, SearchSettings(), proposals, "model-id")
     assert len(clips) == 1  # repeated IDs never fill the clip count
-    assert clips[0].score == 80
+    assert clips[0].score == 81  # 40% opening, 25% event, 15% emotion, 20% completeness
     assert (clips[0].start_ms, clips[0].end_ms) == (proposals[0].start_ms, proposals[0].end_ms)
     assert 60000 <= clips[0].end_ms - clips[0].start_ms <= 90000
     with pytest.raises(ValueError, match="Номер"):

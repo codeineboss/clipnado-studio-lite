@@ -7,7 +7,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from .local_llm import (ClipProposal, LocalAnalysisResult, LocalModelProvider, PromptTooLong,
+from .local_llm import (HOOK_VERSION, ClipProposal, LocalAnalysisResult, LocalModelProvider, PromptTooLong,
                         build_request, clip_proposals, decode_choices, model_identity, stage_model, validate_tools)
 from .models import candidate_from_dict, Candidate, MediaInfo, SearchSettings, Segment, timecode
 from .process import Cancellation, Progress
@@ -63,7 +63,8 @@ class LocalClipAssistant(LocalModelProvider):
             from .profiles import SEARCH_PROFILE_VERSION
             identity_settings["profile_version"] = SEARCH_PROFILE_VERSION
         payload = {"source": media.source_file_id, "model": model_id, "anchor": [anchor.start_ms, anchor.end_ms],
-                   "segments": [asdict(s) for s in segments[left:right]], "settings": identity_settings, "version": 1}
+                   "segments": [asdict(s) for s in segments[left:right]], "settings": identity_settings, "version": 1,
+                   "hook_version": HOOK_VERSION}
         identity = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         folder = cache / "local-refine" / identity
         saved = folder / "result.json"

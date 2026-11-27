@@ -730,7 +730,7 @@ def test_mixed_span_reply_resolves_global_rows_and_rejects_unknown_pairs():
         [reply], media, segments, settings, request.proposals, "model"
     )
     assert (result[0].start_ms, result[0].end_ms) == (p.start_ms, p.end_ms)
-    assert "R5:" in request.prompt and "clip_id" not in request.system
+    assert "R5 (6 с):" in request.prompt and "clip_id" not in request.system
     assert "span" in request.retry_hint
     with pytest.raises(ValueError, match="Пара реплик"):
         decode_choices(

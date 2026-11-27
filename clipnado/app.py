@@ -43,6 +43,7 @@ from .workers import Worker
 from .local_llm import LocalModelProvider, prepare_backend
 from .assist import LocalClipAssistant
 from .suggestions import ClipSuggestionsDialog
+from .clip_editor import ClipEditorDialog, edited_candidate
 
 STYLE = """
 QWidget { background: #111820; color: #e7edf3; font-family: 'Segoe UI', 'DejaVu Sans'; font-size: 13px; }
@@ -324,6 +325,8 @@ class MainWindow(QMainWindow):
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.addLayout(controls)
         refinement = QHBoxLayout()
+        self.edit_clip_button = button("Изменить отрезок…", self.edit_selected_clip)
+        refinement.addWidget(self.edit_clip_button)
         self.refine_button = button("Подобрать границы", self.refine_selected)
         refinement.addWidget(self.refine_button)
         self.undo_boundaries_button = button("Отменить границы", self.undo_boundaries)
@@ -364,7 +367,7 @@ class MainWindow(QMainWindow):
         self.still_timer = QTimer(self)
         self.still_timer.setSingleShot(True)
         self.still_timer.timeout.connect(lambda: self.request_poster(self.player.position()))
-        self.reason = note("Выберите строку. Начало и конец можно изменить прямо в таблице: ЧЧ:ММ:СС.мс.")
+        self.reason = note("Выберите клип → «Изменить отрезок…»: просмотр соседних секунд и ручные границы. Таймкоды также редактируются в таблице.")
         preview_layout.addWidget(self.reason)
         inner.addWidget(preview)
         inner.setSizes([310, 340])
@@ -1150,6 +1153,41 @@ class MainWindow(QMainWindow):
         self.changed()
         self.status.setText("Прежние границы клипа восстановлены.")
 
+    def edit_selected_clip(self):
+        anchor = self.current_candidate()
+        if not self.project or self.task_thread is not None or anchor is None:
+            return
+        self.player.pause()
+        source_id, original = self.project.media.source_file_id, copy.deepcopy(anchor)
+        dialog = ClipEditorDialog(self, self.project.media, anchor)
+        try:
+            if dialog.exec() == QDialog.Accepted:
+                target = next((c for c in self.project.candidates if c.id == original.id), None)
+                if (self.project.media.source_file_id != source_id or target != original):
+                    raise ValueError("Клип изменился. Откройте редактор отрезка заново.")
+                self.apply_manual_bounds(target, *dialog.bounds())
+        except ValueError as exc:
+            self.show_error(exc)
+        finally:
+            dialog.stop()
+            dialog.deleteLater()
+
+    def apply_manual_bounds(self, target, start, end):
+        revised = edited_candidate(self.project.media, self.project.segments, target, start, end)
+        if revised == target:
+            return
+        self.boundary_undo.append(copy.deepcopy(target))
+        for name, value in vars(revised).items():
+            setattr(target, name, value)
+        self.preview_end = None
+        self.refresh_candidates()
+        for row in range(self.table.rowCount()):
+            if self.table.item(row, 0).data(Qt.UserRole) == target.id:
+                self.table.selectRow(row)
+                break
+        self.changed()
+        self.status.setText("Ручные границы сохранены и будут использованы при экспорте. «Отменить границы» вернёт прежний отрезок.")
+
     def analysis_ready(self, project):
         self.project = project
         self.boundary_undo.clear()
@@ -1218,6 +1256,7 @@ class MainWindow(QMainWindow):
             self.more_button.setEnabled(len(visible) < len(candidates))
         self.repopulating = False
         self.refine_button.setEnabled(self.current_candidate() is not None)
+        self.edit_clip_button.setEnabled(self.current_candidate() is not None)
         self.undo_boundaries_button.setEnabled(bool(self.boundary_undo))
         self.export_layout_changed()
 
@@ -1226,23 +1265,24 @@ class MainWindow(QMainWindow):
             return
         identity = self.table.item(item.row(), 0).data(Qt.UserRole)
         c = next(c for c in self.project.candidates if c.id == identity)
-        previous = (c.start_ms, c.end_ms, c.selected)
         try:
+            if item.column() in (1, 2):
+                start = parse_time(self.table.item(item.row(), 1).text())
+                end = parse_time(self.table.item(item.row(), 2).text())
+                self.apply_manual_bounds(c, start, end)
+                return
             c.selected = self.table.item(item.row(), 0).checkState() == Qt.Checked
-            c.start_ms = parse_time(self.table.item(item.row(), 1).text())
-            c.end_ms = parse_time(self.table.item(item.row(), 2).text())
-            c.validate(self.project.media)
             self.changed()
             self.results_label.setText(f"Показано {self.table.rowCount()} из {len(self.project.candidates)} · отмечено {sum(c.selected for c in self.project.candidates)}")
             self.export_layout_changed()
         except ValueError as exc:
-            c.start_ms, c.end_ms, c.selected = previous
             self.show_error(exc)
             self.refresh_candidates()
 
     def candidate_selected(self):
         c = self.current_candidate()
         self.refine_button.setEnabled(c is not None)
+        self.edit_clip_button.setEnabled(c is not None)
         if c:
             self.reason.setText(c.reason + "\n" + c.transcript_excerpt[:500])
             self.player.pause()
