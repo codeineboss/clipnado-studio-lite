@@ -1158,8 +1158,9 @@ class MainWindow(QMainWindow):
         if not self.project or self.task_thread is not None or anchor is None:
             return
         self.player.pause()
+        self.preview_end = None
         source_id, original = self.project.media.source_file_id, copy.deepcopy(anchor)
-        dialog = ClipEditorDialog(self, self.project.media, anchor)
+        dialog = ClipEditorDialog(self, self.project.media, anchor, self.player)
         try:
             if dialog.exec() == QDialog.Accepted:
                 target = next((c for c in self.project.candidates if c.id == original.id), None)

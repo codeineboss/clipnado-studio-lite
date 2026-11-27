@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import copy
-from pathlib import Path
-
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
+from PySide6.QtCore import Qt, Slot
+from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
                               QLabel, QLineEdit, QPushButton, QSlider, QVBoxLayout)
 
@@ -21,7 +19,6 @@ def edited_candidate(media, segments, candidate, start_ms, end_ms):
     result.start_ms, result.end_ms = start_ms, end_ms
     result.validate(media)
     if (start_ms, end_ms) != (candidate.start_ms, candidate.end_ms):
-        result.version += 1
         result.transcript_excerpt = " ".join(
             s.text for s in segments if s.start_ms < end_ms and s.end_ms > start_ms)[:2000]
         if MANUAL_NOTE not in result.reason:
@@ -36,11 +33,12 @@ def editor_time(value):
 
 
 class ClipEditorDialog(QDialog):
-    def __init__(self, parent, media, candidate):
+    def __init__(self, parent, media, candidate, player):
         super().__init__(parent)
         self.media, self.original = copy.deepcopy(media), copy.deepcopy(candidate)
         self.preview_end = None
         self.pending_play = None
+        self.stopped = False
         self.setWindowTitle("Изменить отрезок · исходное видео")
         self.resize(960, 700)
         layout = QVBoxLayout(self)
@@ -50,16 +48,14 @@ class ClipEditorDialog(QDialog):
         layout.addWidget(label)
         self.video = VideoPreview()
         layout.addWidget(self.video, 1)
-        self.player = QMediaPlayer(self)
-        self.audio = QAudioOutput(self)
-        self.player.setAudioOutput(self.audio)
-        self.sink = QVideoSink(self)
+        # Borrow the source player. Opening/closing an editor must not create
+        # and destroy another FFmpeg decoder while frames are being delivered.
+        self.player = player
+        self.sink = player.videoSink()
         self.sink.videoFrameChanged.connect(self.video.set_frame, Qt.QueuedConnection)
-        self.player.setVideoSink(self.sink)
-        self.player.positionChanged.connect(self.position_changed)
-        self.player.mediaStatusChanged.connect(self.media_status_changed)
-        self.player.errorOccurred.connect(lambda *_: self.error.setText(
-            "Не удалось воспроизвести исходник: " + self.player.errorString()))
+        self.player.positionChanged.connect(self.position_changed, Qt.QueuedConnection)
+        self.player.mediaStatusChanged.connect(self.media_status_changed, Qt.QueuedConnection)
+        self.player.errorOccurred.connect(self.media_error, Qt.QueuedConnection)
 
         transport = QHBoxLayout()
         for text, action in (("▶ Отрезок", self.play_clip), ("▶ Соседние ±10 с", self.play_context),
@@ -102,9 +98,10 @@ class ClipEditorDialog(QDialog):
         layout.addWidget(buttons)
         self.start.textChanged.connect(self.validate_draft)
         self.end.textChanged.connect(self.validate_draft)
-        self.finished.connect(lambda *_: self.stop())
+        # Release subscriptions after QDialog's native close operation. The
+        # caller also releases them immediately after the modal loop returns.
+        self.finished.connect(self.stop, Qt.QueuedConnection)
         self.validate_draft()
-        self.player.setSource(QUrl.fromLocalFile(str(Path(media.path).resolve())))
         self.play_clip()
 
     def bounds(self):
@@ -132,9 +129,11 @@ class ClipEditorDialog(QDialog):
     def play_range(self, start, end):
         self.preview_end = end
         self.pending_play = (start, end)
-        self.media_status_changed(self.player.mediaStatus())
+        self.media_status_changed()
 
-    def media_status_changed(self, status):
+    @Slot()
+    def media_status_changed(self):
+        status = self.player.mediaStatus()
         if self.pending_play and status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia, QMediaPlayer.EndOfMedia):
             start, self.preview_end = self.pending_play
             self.pending_play = None
@@ -159,6 +158,7 @@ class ClipEditorDialog(QDialog):
         self.preview_end = None
         self.player.setPosition(max(0, min(at, self.media.duration_ms)))
 
+    @Slot(int)
     def position_changed(self, at):
         if not self.position.isSliderDown():
             self.position.setValue(at)
@@ -175,8 +175,19 @@ class ClipEditorDialog(QDialog):
             return
         super().accept()
 
+    @Slot()
     def stop(self):
+        if self.stopped:
+            return
+        self.stopped = True
         self.preview_end = None
         self.pending_play = None
-        self.player.stop()
-        self.player.setSource(QUrl())
+        self.player.pause()
+        self.sink.videoFrameChanged.disconnect(self.video.set_frame)
+        self.player.positionChanged.disconnect(self.position_changed)
+        self.player.mediaStatusChanged.disconnect(self.media_status_changed)
+        self.player.errorOccurred.disconnect(self.media_error)
+
+    @Slot()
+    def media_error(self):
+        self.error.setText("Не удалось воспроизвести исходник: " + self.player.errorString())

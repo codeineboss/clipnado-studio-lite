@@ -28,9 +28,10 @@ def test_manual_bounds_accept_example_outside_search_limits_and_reject_invalid()
 
 
 def test_editor_cancel_reset_and_invalid_draft_never_change_candidate(app,window,media):
+    window.media_loaded(media)
     c = Candidate(media.source_file_id,2000,4000,80,'Юмор','Выбор',selected=True)
     old=copy.deepcopy(c)
-    d=ClipEditorDialog(window,media,c)
+    d=ClipEditorDialog(window,media,c,window.player)
     d.start.setText('00:01');d.end.setText('00:07')
     assert d.bounds()==(1000,7000)
     d.end.setText('00:00');d.accept()
@@ -75,3 +76,26 @@ def test_editor_real_playback_apply_export_roundtrip_and_undo(app,window,media,t
     assert abs(probe(output,window.tools).duration_ms-6000)<200
     window.undo_boundaries()
     assert c==original and not window.boundary_undo
+
+
+def test_editor_repeated_play_apply_cancel_reuses_source_player(app,window,media):
+    window.media_loaded(media)
+    c=Candidate(media.source_file_id,2000,4000,80,'Юмор','Автовыбор',selected=True)
+    window.project.candidates=[c];window.refresh_candidates();window.table.selectRow(0)
+    old=copy.deepcopy(c)
+    for iteration in range(5):
+        ticks=[0];pixels=[False];timer=QTimer(window)
+        def close_editor():
+            d=next((d for d in window.findChildren(ClipEditorDialog) if d.isVisible()),None)
+            if d is None:return
+            assert d.player is window.player and d.sink is window.video_sink
+            ticks[0]+=1
+            if d.video.frame_count and d.player.position()>200:
+                pixels[0]=True;timer.stop()
+                d.accept() if iteration%2 else d.reject()
+            elif ticks[0]>400:
+                timer.stop();d.reject()
+        timer.timeout.connect(close_editor);timer.start(25)
+        window.edit_selected_clip();timer.stop();timer.deleteLater()
+        assert pixels[0],(iteration,ticks[0])
+        assert c==old and not window.boundary_undo

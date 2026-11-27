@@ -22,7 +22,7 @@ from .settings import SEMANTIC_MODEL_NAME
 
 _MODEL_HASHES = {}
 CONTEXT_TOKENS = 8192
-HOOK_VERSION = 1
+HOOK_VERSION = 4
 
 
 def editorial_score(scores, query=False):
@@ -223,6 +223,15 @@ class ClipProposal:
     cuts_utterance: bool = False
 
 
+def ending_quote(segment):
+    text = " ".join(segment.text.split())
+    if len(text) > 96:
+        text = text[-96:]
+        if " " in text:
+            text = text.split(" ", 1)[1]
+    return text
+
+
 def advertising_break(text):
     """A current, explicit commercial break, not a story mentioning advertising.
 
@@ -301,11 +310,15 @@ def decode_choices(items, media, segments, settings, proposals, model_id):
     result, used = [], set()
     for item in items:
         try:
-            if "span" in item and settings.profile == "mixed":
-                matches = [i for i, p in enumerate(proposals) if not p.cuts_utterance and item["span"] == f"R{p.first}-R{p.last}"]
+            if "first_row" in item and settings.profile == "mixed":
+                first = integer(item["first_row"], "first_row")
+                last = integer(item["last_row"], "last_row")
+                matches = [i for i, p in enumerate(proposals) if not p.cuts_utterance and (first,last)==(p.first,p.last)]
                 if len(matches) != 1:
                     raise ValueError("Пара реплик отсутствует в допустимых интервалах")
                 number = matches[0]
+                if item["ending_quote"] != ending_quote(segments[last]):
+                    raise ValueError("Цитата финала не соответствует последней реплике")
             else:
                 number = integer(item["clip_id"], "clip_id")
             if not 0 <= number < len(proposals):
@@ -406,6 +419,9 @@ def build_request(media, segments, settings, left, right, window_count, proposal
                    "Не переставляй реплики и не придумывай хук. Не вырезай причину, если без неё реакция непонятна. "
                    "Мат, оскорбления, смех, злость и крик сами по себе не повод отклонять момент. "
                    "Заканчивай после удачного итога или реакции, без следующей темы; не добавляй время ради длины. "
+                   "Если два варианта содержат одно событие и его реакцию, предпочитай более короткий без лишнего хвоста. "
+                   "Фраза о переходе к настройкам или другой теме уже не часть развязки. "
+                   "completeness оценивает и наличие итога, и отсутствие лишнего хвоста: следующая тема снижает эту оценку. "
                    "В итоговой оценке веса: hook 40%, event 25%, emotion 15%, completeness 20%. "
                    "В reason кратко укажи, чем цепляет начало и что происходит. "
                    "Длительности реплик помогают оценить первые секунды; у длинной реплики точное время отдельных слов неизвестно.")
@@ -419,16 +435,19 @@ def build_request(media, segments, settings, left, right, window_count, proposal
     if instruction:
         system += " " + instruction
     if span_mode:
-        # The model identifies the first/last speech rows directly. Their PAIR
-        # is constrained by an enum of already validated intervals, rather
-        # than requiring the model to look up an unrelated candidate number.
+        # Ground the final row in its actual words before selecting indices.
+        # The grammar links that quote and both row IDs to a valid interval.
         example = 'Выведи только JSON вида {"clips":[{"clip_id":0,"hook":18,"event":20,"emotion":18,"completeness":20,"category":"Юмор","reason":"Описание"}]}. Пустой список допустим.'
-        system = system.replace(example, "Выведи только JSON с массивом clips и полями span, hook, event, emotion, completeness, category, reason. Пустой список допустим.")
-        system = system.replace("clip_id", "span")
-        system += " В поле span верни разрешённую пару Rначала-Rконца, включая обе реплики. R — номер реплики из расшифровки."
+        system = system.replace(example, "Выведи только JSON с массивом clips и полями ending_quote, first_row, last_row, hook, event, emotion, completeness, category, reason. Пустой список допустим.")
+        system = system.replace("Возвращай clip_id, не first/last и не таймкоды.", "Возвращай first_row и last_row из разрешённой пары, не таймкоды.")
+        system += (" Сначала выбери ending_quote: дословные заключительные слова ПОСЛЕДНЕЙ НУЖНОЙ реплики "
+                   "с результатом, шуткой или реакцией, до перехода к другой теме. "
+                   "Пустая подводка, настройки и следующая тема НЕ являются финалом события. "
+                   "Затем first_row — номер начальной реплики, last_row — номер этой последней нужной реплики. "
+                   "Обе реплики входят в отрезок. Выбирай только разрешённые пары.")
         prompt = "РАСШИФРОВКА\n" + "\n".join(f"R{i+left} ({(segment.end_ms-segment.start_ms)/1000:g} с): {segment.text}" for i,segment in enumerate(segments[left:right]))
-        prompt += "\n\nДОПУСТИМЫЕ ИНТЕРВАЛЫ (span; длительность в секундах)\n" + "\n".join(
-            f"R{p.first}-R{p.last}; {(p.end_ms-p.start_ms)/1000:g}" for p in proposals)
+        prompt += "\n\nДОПУСТИМЫЕ ПАРЫ (first_row–last_row, обе входят; секунды)\n" + "\n".join(
+            f"{p.first}–{p.last}; {(p.end_ms-p.start_ms)/1000:g}" for p in proposals)
     elif settings.profile == "mixed" and proposals_override is None:
         system += " В списке C — номер клипа для поля clip_id, R — номер реплики. Возвращай числовой clip_id из списка C."
         # Timecodes stay in the validated local proposal map. The model only
@@ -458,17 +477,21 @@ def build_request(media, segments, settings, left, right, window_count, proposal
     if span_mode:
         original = schema["properties"]["clips"]["items"]
         branches = []
-        for is_long in (False, True):
-            allowed = [f"R{p.first}-R{p.last}" for p in proposals if (p.end_ms-p.start_ms > 60000) == is_long]
-            if not allowed:
-                continue
-            fields = copy.deepcopy(original)
-            fields["properties"].pop("clip_id")
-            fields["properties"] = {"span": {"type": "string", "enum": allowed}, **fields["properties"]}
-            fields["required"][0] = "span"
-            if is_long:
-                fields["properties"]["category"]["enum"] = ["История"]
-            branches.append(fields)
+        for last in sorted({p.last for p in proposals}):
+            for is_long in (False, True):
+                allowed = [p for p in proposals if p.last == last and (p.end_ms-p.start_ms > 60000) == is_long]
+                if not allowed:
+                    continue
+                fields = copy.deepcopy(original)
+                fields["properties"].pop("clip_id")
+                fields["properties"] = {
+                    "ending_quote": {"type": "string", "enum": [ending_quote(segments[last])]},
+                    "first_row": {"type": "integer", "enum": sorted({p.first for p in allowed})},
+                    "last_row": {"type": "integer", "enum": [last]}, **fields["properties"]}
+                fields["required"] = ["ending_quote", "first_row", "last_row", *fields["required"][1:]]
+                if is_long:
+                    fields["properties"]["category"]["enum"] = ["История"]
+                branches.append(fields)
         schema["properties"]["clips"]["items"] = branches[0] if len(branches) == 1 else {"anyOf": branches}
     if settings.query:
         fields = schema["properties"]["clips"]["items"]
@@ -476,7 +499,7 @@ def build_request(media, segments, settings, left, right, window_count, proposal
         fields["required"].append("relevance")
     request = LocalRequest(system, prompt, schema, proposals, min(1536, max(384, limit * 256)))
     if span_mode:
-        request.retry_hint = "\nПредыдущий ответ отклонён. Верни span ТОЛЬКО из списка допустимых пар реплик R, четыре оценки от 0 до 25 и завершённый JSON."
+        request.retry_hint = "\nПредыдущий ответ отклонён. Верни разрешённые first_row, last_row, точную ending_quote последней реплики, четыре оценки 0–25 и завершённый JSON."
     return request
 
 

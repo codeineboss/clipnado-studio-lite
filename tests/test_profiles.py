@@ -491,7 +491,7 @@ def test_mixed_request_offers_short_events_and_long_stories_together():
         "model",
     )
     assert [c.category for c in accepted] == ["Юмор", "История"]
-    assert "длительность" in request.prompt
+    assert "секунды" in request.prompt
     assert all(s.text in request.prompt for s in segments)
     item_schema = request.schema["properties"]["clips"]["items"]
     branches = item_schema.get("anyOf", [item_schema])
@@ -725,16 +725,16 @@ def test_mixed_span_reply_resolves_global_rows_and_rejects_unknown_pairs():
         category="Юмор",
         reason="Законченное событие",
     )
-    reply = dict(base, span=f"R{p.first}-R{p.last}")
+    reply = dict(base, first_row=p.first,last_row=p.last,ending_quote=segments[p.last].text)
     result = decode_choices(
         [reply], media, segments, settings, request.proposals, "model"
     )
     assert (result[0].start_ms, result[0].end_ms) == (p.start_ms, p.end_ms)
     assert "R5 (6 с):" in request.prompt and "clip_id" not in request.system
-    assert "span" in request.retry_hint
+    assert "last_row" in request.retry_hint
     with pytest.raises(ValueError, match="Пара реплик"):
         decode_choices(
-            [dict(base, span="R999-R1000")],
+            [dict(base, first_row=999,last_row=1000,ending_quote='Нет такой реплики')],
             media,
             segments,
             settings,
@@ -744,9 +744,10 @@ def test_mixed_span_reply_resolves_global_rows_and_rejects_unknown_pairs():
     item_schema = request.schema["properties"]["clips"]["items"]
     branches = item_schema.get("anyOf", [item_schema])
     for branch in branches:
-        pairs = branch["properties"]["span"]["enum"]
+        firsts = branch["properties"]["first_row"]["enum"]
+        lasts = branch["properties"]["last_row"]["enum"]
         long = any(
-            p.end_ms - p.start_ms > 60000 and f"R{p.first}-R{p.last}" in pairs
+            p.end_ms - p.start_ms > 60000 and p.first in firsts and p.last in lasts
             for p in request.proposals
         )
         if long:
