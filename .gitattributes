@@ -5,3 +5,4 @@ clipnado/selection.py text eol=lf
 clipnado/profiles.py text eol=lf
 clipnado/clip_editor.py text eol=lf
 clipnado/assist.py text eol=lf
+qa/local-*.xml text eol=lf
