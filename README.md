@@ -4,7 +4,7 @@
 
 
 <!-- WINDOWS_VALIDATION_START -->
-Выпуск 0.1.20 проходит новый Windows-прогон с настоящими моделями и запуском готового пакета.
+**Windows: пройдено тестов — 253, ошибок и пропусков нет.** [Полный набор](https://github.com/codeineboss/clipnado-studio-lite/actions/runs/45973608531), [готовый пакет](https://github.com/codeineboss/clipnado-studio-lite/actions/runs/45973608531). Исправление кавычек Qwen, частичные результаты/продолжение, ручной редактор, UTF-8 и настоящие модели проверены. Подробности: [QA_REPORT.md](QA_REPORT.md).
 <!-- WINDOWS_VALIDATION_END -->
 
 ## Исправление сбоя Qwen на кавычках
