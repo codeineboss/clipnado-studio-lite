@@ -17,6 +17,7 @@ from .media import Tools, fingerprint, require_space
 from .models import candidate_from_dict, Candidate, MediaInfo, SearchSettings, Segment, integer, timecode
 from .process import Cancellation, Progress, run
 from .projects import atomic_json
+from .native_grammar import compile_schema
 from .selection import choose_candidates
 from .settings import SEMANTIC_MODEL_NAME
 
@@ -47,7 +48,7 @@ class PromptTooLong(Exception):
 
 
 def context_overflow(message):
-    match = re.search(r"prompt is too long\s*\((\d+) tokens,\s*max\s*(\d+)\)", str(message), re.I)
+    match = re.search(r"prompt is too long\s*\((\d+) tokens,\s*max\s*(\d+)\)", getattr(message, 'output', str(message)), re.I)
     return (int(match[1]), int(match[2])) if match else None
 
 
@@ -576,18 +577,29 @@ class LocalModelProvider:
             (work / "system.txt").write_text(request.system, encoding="utf-8")
             (work / "prompt.txt").write_text(request.prompt, encoding="utf-8")
             (work / "schema.json").write_text(json.dumps(request.schema, ensure_ascii=False), encoding="utf-8")
+            (work / "schema.gbnf").write_text(compile_schema(request.schema), encoding="utf-8")
             args = [self.tools.llama, "-m", os.path.relpath(staged, work),
-                "-f", "prompt.txt", "--system-prompt-file", "system.txt", "--json-schema-file", "schema.json",
+                "-f", "prompt.txt", "--system-prompt-file", "system.txt", "--grammar-file", "schema.gbnf",
                 "--conversation", "--single-turn", "--simple-io", "--no-display-prompt", "--offline", "--no-warmup", "--no-context-shift",
                 "-c", str(CONTEXT_TOKENS), "-b", "256", "-ub", "128", "-n", str(request.output_tokens),
                 "--temp", "0.1", "--seed", "42", "-t", str(self.tools.threads), "-tb", str(self.tools.threads),
                 "-ngl", str(self.tools.llm_gpu_layers) if self.tools.llama != self.cpu_tools.llama else "0"]
             progress(80, "Qwen · проверка полного размера запроса…")
-            count = prompt_tokens(args, self.cpu_tools.llama, token, work)
+            outputs = []
+
+            def native_failure(exc, stage):
+                outputs.append(getattr(exc, 'output', str(exc)))
+                code = getattr(exc, 'returncode', None)
+                suffix = f" (код {code})" if code is not None else ""
+                return f"Qwen: {stage}{suffix}. Полный вывод движка сохранён в диагностике; сохранённые участки не потеряны."
+
+            try:
+                count = prompt_tokens(args, self.cpu_tools.llama, token, work)
+            except RuntimeError as exc:
+                return None, 0, outputs, native_failure(exc, "не удалось подготовить запрос")
             if count > request.prompt_limit:
                 raise PromptTooLong(count, request.prompt_limit)
             stats["max_prompt_tokens"] = max(stats["max_prompt_tokens"], count)
-            outputs = []
             for attempt in range(2):
                 token.check()
                 def heartbeat(_, elapsed):
@@ -601,7 +613,8 @@ class LocalModelProvider:
                         # not repeat the same oversized request on the CPU.
                         raise PromptTooLong(overflow[0], request.prompt_limit) from exc
                     if self.tools.llama == self.cpu_tools.llama:
-                        raise
+                        return None, count, outputs, native_failure(exc, "движок завершил обработку с ошибкой")
+                    outputs.append(getattr(exc, 'output', str(exc)))
                     stats["warnings"].append("Запуск Qwen на Vulkan не удался; текущий и следующие участки обработаны на CPU.")
                     self.tools.llama = self.cpu_tools.llama
                     args[0], args[-1] = self.cpu_tools.llama, "0"
@@ -611,7 +624,7 @@ class LocalModelProvider:
                         overflow = context_overflow(cpu_exc)
                         if overflow:
                             raise PromptTooLong(overflow[0], request.prompt_limit) from cpu_exc
-                        raise
+                        return None, count, outputs, native_failure(cpu_exc, "повтор на CPU завершился с ошибкой")
                 outputs.append(output[-16000:])
                 try:
                     return decode(response_json(output, request.response_field)), count, outputs, None

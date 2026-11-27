@@ -52,7 +52,7 @@ def main():
         if "ERROR" in diagnostics or "MISSING" in diagnostics:
             raise RuntimeError("Packaged diagnostics failed")
         # A separate process separates native-model startup from the GUI deadline.
-        execute(
+        bootstrap_output = execute(
             r"""
 import os
 from pathlib import Path
@@ -65,9 +65,26 @@ result=run([str(Path('tools/llama-cli.exe').resolve()),'-m',model,'-p','Прив
             '--no-display-prompt','--no-warmup','--offline'],timeout=180)
 assert 'eval time' in result
 print('PACKAGED_ACTUAL_QWEN_TOKEN_OK',flush=True)
+import tempfile
+from clipnado.native_grammar import compile_schema
+from clipnado.local_llm import response_json
+value='Он сказал: "Да\\нет". '+chr(1)+' 😂'
+schema={'type':'object','properties':{'quotes':{'type':'array','minItems':1,'maxItems':1,
+        'items':{'type':'object','properties':{'value':{'type':'string','enum':[value]}},
+                 'required':['value'],'additionalProperties':False}}},
+        'required':['quotes'],'additionalProperties':False}
+with tempfile.TemporaryDirectory() as temp:
+    grammar=Path(temp)/'quoted.gbnf';grammar.write_text(compile_schema(schema),encoding='utf-8')
+    result=run([str(Path('tools/llama-cli.exe').resolve()),'-m',model,'-p','Верни JSON по грамматике.',
+                '--grammar-file',str(grammar),'-n','96','-c','512','-t','2','-ngl','0','--conversation',
+                '--single-turn','--simple-io','--no-display-prompt','--no-warmup','--offline'],timeout=480)
+    assert response_json(result,'quotes')==[{'value':value}]
+print('PACKAGED_QUOTED_GRAMMAR_GENERATION_OK',flush=True)
 """,
-            210,
+            700,
         )
+        if 'PACKAGED_QUOTED_GRAMMAR_GENERATION_OK' not in bootstrap_output:
+            raise RuntimeError('Packaged quoted JSON generation did not complete')
         code = r"""
 import json,sys,socket,traceback,faulthandler
 from pathlib import Path

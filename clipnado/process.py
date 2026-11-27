@@ -15,6 +15,14 @@ class Cancelled(Exception):
     pass
 
 
+class ProcessExecutionError(RuntimeError):
+    """Retain the complete native output; the UI message alone is bounded."""
+    def __init__(self, message, output='', returncode=None):
+        super().__init__(message)
+        self.output = output
+        self.returncode = returncode
+
+
 class Cancellation:
     def __init__(self):
         self.event = threading.Event()
@@ -52,7 +60,8 @@ def run(args: list[str], token: Cancellation | None = None, cwd: Path | None = N
             while child.poll() is None:
                 token.check()
                 if time.monotonic() - started > timeout:
-                    raise RuntimeError("Превышено время ожидания внешнего инструмента")
+                    captured = (Path(temp_dir) / "output.log").read_bytes().decode("utf-8", "replace")
+                    raise ProcessExecutionError("Превышено время ожидания внешнего инструмента", captured)
                 if on_output and time.monotonic() >= next_output:
                     with (Path(temp_dir) / "output.log").open("rb") as reader:
                         reader.seek(output_offset)
@@ -97,5 +106,5 @@ def run(args: list[str], token: Cancellation | None = None, cwd: Path | None = N
         if on_output:
             on_output(raw[output_offset:].decode("utf-8", "replace"), time.monotonic() - started)
         if child.returncode:
-            raise RuntimeError(f"{Path(args[0]).name}: операция не выполнена.\n{result[-2200:]}")
+            raise ProcessExecutionError(f"{Path(args[0]).name}: операция не выполнена.\n{result[-2200:]}", result, child.returncode)
         return result
